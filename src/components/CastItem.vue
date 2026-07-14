@@ -10,6 +10,7 @@
       'emoji-cast': method === CastMethod.EMOJI_CHAT,
       'custom-cast': method === CastMethod.CUSTOM
     }">
+    <span class="time" v-if="time">{{ formatTime(time) }}</span>
     <span class="prefix">$</span>
     <p class="content">
       <label class="nickname">[{{ user?.name ? user.name : 'unknown' }}]：</label>
@@ -21,6 +22,11 @@
         <img v-if="item.node === 'emoji'" class="emoji" alt="会员表情" :src="item.url" />
       </template>
     </p>
+    <span class="gift-info" v-if="method === CastMethod.GIFT && gift">
+      <span class="gift-name">{{ gift.name }}</span>
+      <span class="gift-price" v-if="settings.showGiftPrice && gift.price">×{{ gift.price }}抖币</span>
+      <span class="gift-total" v-if="settings.showGiftTotal && gift.price && gift.count && Number(gift.count) > 1">={{ giftTotal }}抖币</span>
+    </span>
   </div>
 </template>
 
@@ -28,6 +34,18 @@
 import { CastMethod, CastRtfContentType, type CastGift, type CastRtfContent, type CastUser } from '@/core/dycast';
 import { emojis } from '@/core/emoji';
 import { computed } from 'vue';
+import { useSettings } from '@/utils/settingUtil';
+
+/**
+ * 格式化时间戳为 HH:mm:ss
+ */
+const formatTime = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  const h = date.getHours().toString().padStart(2, '0');
+  const m = date.getMinutes().toString().padStart(2, '0');
+  const s = date.getSeconds().toString().padStart(2, '0');
+  return `${h}:${m}:${s}`;
+};
 
 interface CastContentDOM {
   node: 'text' | 'icon' | 'emoji' | 'user' | 'touser';
@@ -42,9 +60,19 @@ interface CastItemProps {
   gift?: CastGift;
   content?: string;
   rtfContent?: CastRtfContent[];
+  time?: number;
 }
 
 const props = withDefaults(defineProps<CastItemProps>(), {});
+
+/** 设置 */
+const settings = useSettings();
+
+/** 计算礼物总价 */
+const giftTotal = computed(() => {
+  if (!props.gift?.price || !props.gift?.count) return 0;
+  return props.gift.price * Number(props.gift.count);
+});
 
 /**
  * 创建普通内容
@@ -193,6 +221,10 @@ $atUserDarkColor: #e83929;
 $toUserDarkColor: #2ca9e1;
 
 $giftText: #eba825;
+$timeColor: #b0b0b0;
+$giftNameColor: #e6a23c;
+$giftPriceColor: #f56c6c;
+$giftTotalColor: #e6a23c;
 
 .cast-item {
   width: 100%;
@@ -200,6 +232,14 @@ $giftText: #eba825;
   padding-bottom: 3px;
   font-family: 'dymht';
   font-size: 1rem;
+  .time {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: $timeColor;
+    line-height: 1.5rem;
+    margin-right: 5px;
+    font-family: 'mkwxy';
+  }
   .prefix {
     font-family: 'mkwxy';
     color: $prefixColor;
@@ -247,6 +287,30 @@ $giftText: #eba825;
     margin: 0;
     flex-grow: 1;
     line-height: 1.5rem;
+  }
+  .gift-info {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    margin-left: auto;
+    padding-left: 8px;
+    gap: 4px;
+    .gift-name {
+      font-size: 0.85rem;
+      color: $giftNameColor;
+      font-family: 'mkwxy';
+    }
+    .gift-price {
+      font-size: 0.75rem;
+      color: $giftPriceColor;
+      font-family: 'mkwxy';
+    }
+    .gift-total {
+      font-size: 0.75rem;
+      color: $giftTotalColor;
+      font-family: 'mkwxy';
+      font-weight: bold;
+    }
   }
   &.gift-cast {
     .text {

@@ -10,6 +10,11 @@
         :member-count="memberCount"
         :user-count="userCount"
         :like-count="likeCount" />
+      <div class="view-left-highlight">
+        <hr class="hr" />
+        <!-- 礼物置顶 -->
+        <GiftHighlight ref="giftHighlightRef" />
+      </div>
       <div class="view-left-bottom">
         <SidTool />
         <div class="view-left-tools">
@@ -18,6 +23,9 @@
           </div>
           <div class="view-left-tool cm-btn" title="保存弹幕" @click.stop="saveCastToFile">
             <i class="ice-save icon"></i>
+          </div>
+          <div class="view-left-tool cm-btn" title="设置" @click.stop="settingsVisible = true">
+            <i class="ice-setting icon"></i>
           </div>
         </div>
         <hr class="hr" />
@@ -36,8 +44,11 @@
           placeholder="请输入房间号"
           v-model:value="roomNum"
           :test="verifyRoomNumber"
+          :history-list="roomHistory"
           @confirm="connectLive"
-          @cancel="disconnectLive" />
+          @cancel="disconnectLive"
+          @select-history="handleSelectHistory"
+          @delete-history="handleDeleteHistory" />
         <ConnectInput
           ref="relayInput"
           label="WS地址"
@@ -56,6 +67,8 @@
     </div>
     <!-- 投喂弹窗 -->
     <FeedDialog v-model="fdVisible" />
+    <!-- 设置弹窗 -->
+    <SettingsDialog v-model="settingsVisible" />
   </div>
 </template>
 
@@ -66,6 +79,8 @@ import LiveStatusPanel from '@/components/LiveStatusPanel.vue';
 import CastList from '@/components/CastList.vue';
 import SidTool from '@/components/SidTool/SidTool.vue';
 import FeedDialog from '@/components/FeedDialog.vue';
+import SettingsDialog from '@/components/SettingsDialog.vue';
+import GiftHighlight from '@/components/GiftHighlight.vue';
 import {
   CastMethod,
   DyCast,
@@ -78,6 +93,7 @@ import {
 } from '@/core/dycast';
 import { verifyRoomNum, verifyWsUrl } from '@/utils/verifyUtil';
 import { ref, useTemplateRef } from 'vue';
+import { getHistory, addHistory, removeHistory, type HistoryItem } from '@/utils/historyUtil';
 import { CLog } from '@/utils/logUtil';
 import { getId } from '@/utils/idUtil';
 import { RelayCast } from '@/core/relay';
@@ -91,6 +107,8 @@ const connectStatus = ref<ConnectStatus>(0);
 const relayStatus = ref<ConnectStatus>(0);
 // 房间号
 const roomNum = ref<string>('');
+// 历史记录
+const roomHistory = ref<HistoryItem[]>(getHistory());
 // 房间号输入框状态
 const roomInputRef = useTemplateRef('roomInput');
 // 转发地址
@@ -101,6 +119,8 @@ const statusPanelRef = useTemplateRef('panel');
 
 // 投喂弹窗可见性
 const fdVisible = ref(false);
+// 设置弹窗可见性
+const settingsVisible = ref(false);
 
 /** 直播间信息 */
 const cover = ref<string>('');
@@ -116,9 +136,13 @@ const likeCount = ref<string | number>('*****');
 const castRef = useTemplateRef('castEl');
 // 其它弹幕
 const otherRef = useTemplateRef('otherEl');
-// 所有弹幕
+// 礼物置顶
+const giftHighlightRef = useTemplateRef('giftHighlightRef');
+// 所有弹幕（用于保存文件）
+const MAX_CASTS = 10000;
 const allCasts: DyMessage[] = [];
-// 记录弹幕
+// 去重集合（滑动窗口）
+const MAX_SET_SIZE = 5000;
 const castSet = new Set<string>();
 // 弹幕客户端
 let castWs: DyCast | undefined;
@@ -207,6 +231,8 @@ const handleMessages = function (msgs: DyMessage[]) {
           if (!msg?.gift?.repeatEnd) {
             newCasts.push(msg);
             mainCasts.push(msg);
+            // 传递给置顶组件
+            if (giftHighlightRef.value) giftHighlightRef.value.handleMessage(msg);
           }
           break;
         case CastMethod.LIKE:
@@ -245,12 +271,27 @@ const handleMessages = function (msgs: DyMessage[]) {
       }
     }
   } catch (err) {}
-  // 记录
+  // 记录（限制上限）
   allCasts.push(...newCasts);
+  if (allCasts.length > MAX_CASTS) {
+    allCasts.splice(0, allCasts.length - MAX_CASTS);
+  }
+  // 清理过期的去重 ID（滑动窗口）
+  if (castSet.size > MAX_SET_SIZE) {
+    const iter = castSet.values();
+    const toDelete = castSet.size - MAX_SET_SIZE;
+    for (let i = 0; i < toDelete; i++) {
+      const next = iter.next();
+      if (!next.done && next.value) {
+        castSet.delete(next.value);
+      }
+    }
+  }
   if (castRef.value) castRef.value.appendCasts(mainCasts);
   if (otherRef.value) otherRef.value.appendCasts(otherCasts);
-  if (relayWs && relayWs.isConnected()) {
-    relayWs.send(JSON.stringify(msgs));
+  // 只转发过滤后的新消息，减少序列化开销
+  if (relayWs && relayWs.isConnected() && newCasts.length > 0) {
+    relayWs.send(JSON.stringify(newCasts));
   }
 };
 
@@ -265,7 +306,8 @@ const addConsoleMessage = function (content: string) {
         id: getId(),
         method: CastMethod.CUSTOM,
         content,
-        user: { name: '控制台' }
+        user: { name: '控制台' },
+        time: Date.now()
       }
     ]);
 };
@@ -278,6 +320,7 @@ function clearMessageList() {
   allCasts.length = 0;
   if (castRef.value) castRef.value.clearCasts();
   if (otherRef.value) otherRef.value.clearCasts();
+  if (giftHighlightRef.value) giftHighlightRef.value.clearHighlights();
 }
 
 /**
@@ -297,6 +340,8 @@ const connectLive = function () {
       connectStatus.value = 1;
       setRoomInfo(info);
       addConsoleMessage('直播间已连接');
+      // 保存到历史记录（包含主播信息）
+      roomHistory.value = addHistory(roomNum.value, info?.nickname, info?.avatar);
     });
     cast.on('error', err => {
       CLog.error('DyCast 连接出错 =>', err);
@@ -447,6 +492,21 @@ const saveCastToFile = function () {
 const openFeedDialog = function () {
   fdVisible.value = true;
 };
+
+/**
+ * 选择历史记录
+ */
+const handleSelectHistory = function (value: string) {
+  roomNum.value = value;
+  connectLive();
+};
+
+/**
+ * 删除历史记录
+ */
+const handleDeleteHistory = function (value: string) {
+  roomHistory.value = removeHistory(value);
+};
 </script>
 
 <style lang="scss" scoped>
@@ -476,6 +536,20 @@ $gold: #e6b422;
     flex-grow: 2.5;
     border-right: 1px solid $bd;
     justify-content: space-between;
+  }
+  .view-left-highlight {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    flex: 1;
+    min-height: 0;
+    .hr {
+      height: 0;
+      border: 0;
+      border-top: 1px solid $bd;
+      margin: 8px 12px;
+    }
   }
   .view-left-bottom {
     width: 100%;

@@ -20,7 +20,7 @@
         <label>弹幕信息</label>
       </div>
       <div class="type-icons">
-        <CastTypeBtn v-for="item in castTypes" :key="item.id" :type="item.type" @change="handleCastTypeBtn" />
+        <CastTypeBtn v-for="item in castTypes" :key="item.type" :type="item.type" @change="handleCastTypeBtn" />
       </div>
     </div>
     <div class="cast-list-main">
@@ -37,7 +37,8 @@
               :to-user="item.toUser"
               :gift="item.gift"
               :content="item.content"
-              :rtf-content="item.rtfContent" />
+              :rtf-content="item.rtfContent"
+              :time="item.time" />
           </DynamicScrollerItem>
         </template>
       </DynamicScroller>
@@ -47,9 +48,8 @@
 
 <script setup lang="ts">
 import CastTypeBtn from '@/components/CastTypeBtn/index.vue';
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import type { CastType } from './CastTypeBtn/type';
-import { getId } from '@/utils/idUtil';
 import CastItem from './CastItem.vue';
 import { CastMethod, type DyMessage } from '@/core/dycast';
 import { throttle } from '@/utils/loashUtil';
@@ -78,7 +78,6 @@ const typeMap: Map<CastMethod, boolean> = new Map();
 const castTypes = computed(() => {
   return props.types.map(item => {
     return {
-      id: getId(),
       type: item
     };
   });
@@ -123,12 +122,19 @@ const setCastType = function (type: CastType, flag?: boolean) {
 
 /** 显示弹幕 */
 const casts = ref<DyMessage[]>([]);
-// 所有弹幕
+// 所有弹幕（用于类型切换时重新筛选）
+const MAX_DISPLAY_CASTS = 5000;
 const allCasts: DyMessage[] = [];
+// 滚动锁定
+let scrollRafId: number | null = null;
 // 添加弹幕
 const appendCasts = function (msgs: DyMessage[]) {
   if (!msgs || !msgs.length) return;
   allCasts.push(...msgs);
+  // 限制 allCasts 上限
+  if (allCasts.length > MAX_DISPLAY_CASTS) {
+    allCasts.splice(0, allCasts.length - MAX_DISPLAY_CASTS);
+  }
   addCasts(msgs);
 };
 /**
@@ -139,11 +145,13 @@ const addCasts = function (msgs: DyMessage[], isClear: boolean = false) {
     if (item.method) return !!typeMap.get(item.method);
     else return false;
   });
-  if (isClear) casts.value = list;
-  else casts.value.push(...list);
-  nextTick(() => {
-    autoScrollToBottom();
-  });
+  if (isClear) {
+    casts.value = list;
+  } else {
+    casts.value = [...casts.value, ...list];
+  }
+  // 使用 requestAnimationFrame 合并滚动操作
+  scheduleScrollToBottom();
 };
 /**
  * 清空弹幕
@@ -182,8 +190,13 @@ const scrollToBottom = function () {
   listRef.value?.scrollToBottom?.();
 };
 
-const autoScrollToBottom = function () {
-  if (isAtBottom) scrollToBottom();
+const scheduleScrollToBottom = function () {
+  if (!isAtBottom) return;
+  if (scrollRafId !== null) return;
+  scrollRafId = requestAnimationFrame(() => {
+    scrollRafId = null;
+    scrollToBottom();
+  });
 };
 
 defineExpose({

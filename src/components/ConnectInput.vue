@@ -1,5 +1,5 @@
 <template>
-  <div class="connect-input">
+  <div class="connect-input" ref="containerRef">
     <div class="connect-input-main">
       <label v-if="label" class="label">{{ `${label}:` }}</label>
       <input
@@ -24,12 +24,24 @@
     <div class="connect-input-test" v-if="test">
       <span v-if="testTip">{{ testTip }}</span>
     </div>
+    <!-- 历史记录下拉列表 -->
+    <div class="history-dropdown" v-if="showHistory && historyList.length > 0">
+      <div class="history-item" v-for="item in historyList" :key="item.roomNum" @mousedown.prevent="selectHistory(item.roomNum)">
+        <img v-if="item.avatar" class="history-avatar" :src="item.avatar" alt="头像" />
+        <div class="history-info">
+          <span class="history-nickname" v-if="item.nickname">{{ item.nickname }}</span>
+          <span class="history-room">{{ item.roomNum }}</span>
+        </div>
+        <span class="history-delete" @mousedown.prevent.stop="deleteHistory(item.roomNum)" title="删除">×</span>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { debounce } from '@/utils/loashUtil';
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue';
+import type { HistoryItem } from '@/utils/historyUtil';
 
 interface TestRV {
   flag: boolean;
@@ -43,12 +55,14 @@ interface ConnectInputProps {
   cancelText?: string;
   testTime?: 'blur' | 'change'; // 验证时机
   test?: (value: string) => TestRV; // 验证函数
+  historyList?: HistoryItem[]; // 历史记录列表
 }
 
 const props = withDefaults(defineProps<ConnectInputProps>(), {
   confirmText: '连接',
   cancelText: '断开',
-  testTime: 'blur'
+  testTime: 'blur',
+  historyList: () => []
 });
 /** 输入框是否禁用 */
 const inputDisabled = ref<boolean>(false);
@@ -58,6 +72,10 @@ const btnDisabled = ref<boolean>(false);
 const connectStatus = ref<boolean>(false);
 /** 验证提示 */
 const testTip = ref<string | undefined>(void 0);
+/** 历史记录下拉框显示状态 */
+const showHistory = ref<boolean>(false);
+/** 容器引用 */
+const containerRef = useTemplateRef('containerRef');
 /** event */
 const emits = defineEmits<{
   (e: 'confirm', value?: string): void;
@@ -65,6 +83,8 @@ const emits = defineEmits<{
   (e: 'blur', event: FocusEvent): void;
   (e: 'focus', event: FocusEvent): void;
   (e: 'change', event: Event): void;
+  (e: 'select-history', value: string): void;
+  (e: 'delete-history', value: string): void;
 }>();
 
 /** 输入框值 */
@@ -104,11 +124,37 @@ const handleBlur = (e: FocusEvent) => {
   emits('blur', e);
 };
 const handleFocus = (e: FocusEvent) => {
+  showHistory.value = true;
   emits('focus', e);
 };
 const handleChange = (e: Event) => {
   props.testTime === 'change' && handleTest(inputValue.value);
   emits('change', e);
+};
+
+/**
+ * 选择历史记录
+ */
+const selectHistory = (value: string) => {
+  inputValue.value = value;
+  showHistory.value = false;
+  emits('select-history', value);
+};
+
+/**
+ * 删除历史记录
+ */
+const deleteHistory = (value: string) => {
+  emits('delete-history', value);
+};
+
+/**
+ * 点击外部关闭历史记录下拉框
+ */
+const handleClickOutside = (e: MouseEvent) => {
+  if (containerRef.value && !containerRef.value.contains(e.target as Node)) {
+    showHistory.value = false;
+  }
 };
 
 /**
@@ -138,6 +184,11 @@ const initData = function () {
 
 onMounted(() => {
   initData();
+  document.addEventListener('click', handleClickOutside);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
 });
 
 defineExpose({
@@ -279,6 +330,83 @@ $testColor: $cancelColor;
   100% {
     opacity: 1;
     transform: translate3d(0, 0%, 0);
+  }
+}
+
+.history-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid $bd;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  animation: slide-top 0.2s ease;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  gap: 10px;
+
+  &:hover {
+    background-color: $bg;
+  }
+
+  .history-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .history-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .history-nickname {
+    font-size: 14px;
+    color: $inputColor;
+    font-family: 'mkwxy';
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .history-room {
+    font-size: 12px;
+    color: $placeholder;
+    font-family: 'mkwxy';
+  }
+
+  .history-delete {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: $placeholder;
+    border-radius: 50%;
+    transition: color 0.15s, background-color 0.15s;
+
+    &:hover {
+      color: $cancelColor;
+      background-color: rgba(233, 84, 100, 0.1);
+    }
   }
 }
 </style>

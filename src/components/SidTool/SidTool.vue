@@ -192,8 +192,7 @@ const setSidCookie = function (sid: string) {
     name: 'sessionid',
     value: sid,
     path: '/',
-    maxAge: 604800,
-    secure: true
+    maxAge: 604800
   });
   // document.cookie = `sid_tt=${sid}; Path=/; Max-Age=604800; Secure`;
   // document.cookie = `sessionid_ss=${sid}; Path=/; Max-Age=604800; Secure`;
@@ -202,8 +201,7 @@ const setSidCookie = function (sid: string) {
     name: '__lg',
     value: 'true',
     path: '/',
-    maxAge: 604800,
-    secure: true
+    maxAge: 604800
   });
 };
 

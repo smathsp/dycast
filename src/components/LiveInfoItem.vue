@@ -3,7 +3,7 @@
     <label class="title">{{ title }}：</label>
     <div class="live-info-item-main">
       <img v-if="cover" :src="cover" alt="avatar" class="avatar" />
-      <span class="text" title="{text}">{{ text }}</span>
+      <span class="text" :title="String(text)">{{ text }}</span>
     </div>
   </div>
 </template>
@@ -27,12 +27,13 @@ $textColor: #6b798e;
 .live-info-item {
   width: 100%;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 8px;
   box-sizing: border-box;
   .title {
+    flex-shrink: 0;
     font-family: 'mkwxy';
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: bold;
     color: $titleColor;
     overflow: hidden;
@@ -42,15 +43,15 @@ $textColor: #6b798e;
 }
 
 .live-info-item-main {
-  width: 100%;
+  flex: 1;
   display: flex;
-  justify-content: flex-end;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
+  overflow: hidden;
   .text {
     user-select: none;
-    width: fit-content;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: $textColor;
     font-family: 'dymht';
     overflow: hidden;
@@ -58,10 +59,11 @@ $textColor: #6b798e;
     white-space: nowrap;
   }
   .avatar {
-    width: 2rem;
-    height: 2rem;
+    width: 1.8rem;
+    height: 1.8rem;
     object-fit: cover;
-    border-radius: 0.7rem;
+    border-radius: 0.5rem;
+    flex-shrink: 0;
   }
 }
 </style>

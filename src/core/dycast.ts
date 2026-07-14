@@ -146,6 +146,8 @@ export interface DyMessage {
   rtfContent?: CastRtfContent[];
   room?: LiveRoom;
   rank?: LiveRankItem[];
+  /** 消息时间戳 */
+  time?: number;
 }
 
 export enum CastMethod {
@@ -679,6 +681,11 @@ export class DyCast {
    */
   private ping() {
     try {
+      // 清除之前的定时器，防止泄漏
+      if (this.pingTimer) {
+        clearTimeout(this.pingTimer);
+        this.pingTimer = void 0;
+      }
       let dur = Math.max(10000, Number(this.heartbeatDuration));
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         // 连接正常
@@ -729,12 +736,12 @@ export class DyCast {
   /**
    * 处理一次接收的消息集
    */
-  private async _dealMessages(msgs?: Message[]) {
+  private _dealMessages(msgs?: Message[]) {
     if (!msgs || msgs.length < 1) return;
     const messages: DyMessage[] = [];
     try {
       for (const msg of msgs) {
-        const message = await this._dealMessage(msg);
+        const message = this._dealMessage(msg);
         if (message) messages.push(message);
       }
     } catch (err) {}
@@ -746,7 +753,7 @@ export class DyCast {
    * 处理一条消息
    * @param msg
    */
-  private async _dealMessage(msg: Message) {
+  private _dealMessage(msg: Message) {
     const method = msg.method;
     const data: DyMessage | null = {};
     data.id = msg.msgId;
@@ -826,6 +833,7 @@ export class DyCast {
       // MLog.error('DyCast Message Decode Error =>', method);
       return null;
     }
+    data.time = Date.now();
     return data;
   }
 
