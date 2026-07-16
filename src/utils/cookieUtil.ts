@@ -91,8 +91,9 @@ export const getCookieAsync = async function (name: string) {
   // 用正则匹配对应cookie项，包括path、expires等信息
   try {
     let cookie: CustomCookie | null = null;
-    if (window.cookieStore && window.cookieStore instanceof CookieStore) {
-      const ck = (await window.cookieStore.get(name)) as CookieStoreItem;
+    const cookieStore = (window as any).cookieStore;
+    if (cookieStore && typeof cookieStore.get === 'function') {
+      const ck = (await cookieStore.get(name)) as CookieStoreItem;
       if (ck) {
         cookie = {
           name: ck.name || name,
