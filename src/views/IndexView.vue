@@ -27,6 +27,9 @@
           <div class="view-left-tool cm-btn" title="设置" @click.stop="settingsVisible = true">
             <i class="ice-setting icon"></i>
           </div>
+          <div class="view-left-tool cm-btn" title="弹幕充能" @click.stop="openDanmuPage">
+            <span class="danmu-icon">⚡</span>
+          </div>
         </div>
         <hr class="hr" />
         <LiveStatusPanel ref="panel" :status="connectStatus" />
@@ -539,6 +542,13 @@ const openFeedDialog = function () {
 };
 
 /**
+ * 打开弹幕充能页面
+ */
+const openDanmuPage = function () {
+  window.open(`${location.pathname}?danmu`, '_blank');
+};
+
+/**
  * 选择历史记录
  */
 const handleSelectHistory = function (value: string) {
@@ -661,6 +671,10 @@ $gold: #e6b422;
     }
     .icon {
       font-size: 1em;
+    }
+    .danmu-icon {
+      font-size: 0.9em;
+      line-height: 1;
     }
   }
   .view-center {

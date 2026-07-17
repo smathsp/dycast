@@ -1,5 +1,11 @@
 /// <reference types="vite/client" />
 
+// 音频文件声明
+declare module '*.m4s' {
+  const src: string;
+  export default src;
+}
+
 // global.d.ts 或 index.d.ts 中
 
 interface FilePickerAcceptType {

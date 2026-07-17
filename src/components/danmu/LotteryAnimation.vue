@@ -69,7 +69,7 @@
                 v-if="displayDanmu"
                 :key="rollingKey"
                 class="candidate-card"
-                :class="{ locking: phase === 'locking' }"
+                :class="{}"
               >
                 <div class="card-energy-border"></div>
                 <div class="card-grid"></div>
@@ -88,7 +88,7 @@
 
                 <div class="candidate-information">
                   <div class="candidate-label">
-                    {{ phase === 'locking' ? 'TARGET LOCKED' : 'SCANNING DANMAKU' }}
+                    SCANNING DANMAKU
                   </div>
                   <h2>{{ displayDanmu.nickname }}</h2>
                   <p>{{ displayDanmu.content }}</p>
@@ -96,9 +96,6 @@
 
                 <div class="candidate-code">{{ formatCandidateCode(displayDanmu.id) }}</div>
 
-                <div v-if="phase === 'locking'" class="target-lock">
-                  <span></span><span></span><span></span><span></span>
-                </div>
               </article>
             </Transition>
 
@@ -107,7 +104,7 @@
               <div class="speed-track">
                 <i v-for="item in 20" :key="item"></i>
               </div>
-              <span class="speed-value">{{ phase === 'locking' ? 'LOCK' : 'MAX' }}</span>
+              <span class="speed-value">MAX</span>
             </div>
           </section>
 
@@ -180,9 +177,10 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import { useDanmuState, settings, drawLottery, closeLottery, stopCollecting } from '@/danmu/store';
+import { stopCharging, playLottery, playWinner, stopAll } from '@/danmu/audio';
 import type { Danmu } from '@/danmu/types';
 
-type LotteryPhase = 'ignition' | 'rolling' | 'locking' | 'reveal';
+type LotteryPhase = 'ignition' | 'rolling' | 'reveal';
 
 const state = useDanmuState();
 
@@ -198,7 +196,6 @@ let rollingTimer: number | null = null;
 let animationToken = 0;
 
 const displayDanmu = computed(() => {
-  if (phase.value === 'locking' && winner.value) return winner.value;
   return rollingDanmu.value ?? winner.value;
 });
 
@@ -206,7 +203,6 @@ const phaseText = computed(() => {
   const labels: Record<LotteryPhase, string> = {
     ignition: '能量解放',
     rolling: '正在扫描全部弹幕',
-    locking: '幸运弹幕锁定',
     reveal: '抽奖完成'
   };
   return labels[phase.value];
@@ -268,10 +264,10 @@ function runRoulette(token: number) {
     rollingDanmu.value = getRandomCandidate();
     rollingKey.value++;
     let delay = 55;
-    if (elapsed > 1800) delay = 80;
-    if (elapsed > 2600) delay = 120;
-    if (elapsed > 3200) delay = 190;
-    if (elapsed < 3700) {
+    if (elapsed > 1500) delay = 80;
+    if (elapsed > 2200) delay = 120;
+    if (elapsed > 2700) delay = 190;
+    if (elapsed < 3000) {
       rollingTimer = window.setTimeout(nextFrame, delay);
     }
   };
@@ -292,26 +288,25 @@ function startLotteryAnimation() {
   visible.value = true;
   document.body.style.overflow = 'hidden';
 
-  // 0~700ms：能量爆发
+  // 停止充能音乐，播放抽奖音效（5s）
+  stopCharging();
+  playLottery();
+
+  // 0~500ms：能量爆发
   schedule(() => {
     if (token !== animationToken) return;
     phase.value = 'rolling';
     runRoulette(token);
-  }, 700);
+  }, 500);
 
-  // 4400ms：锁定中奖弹幕
+  // 3500ms：直接揭晓中奖弹幕 + 播放中奖循环音乐
   schedule(() => {
     if (token !== animationToken) return;
-    phase.value = 'locking';
     rollingDanmu.value = winner.value;
     rollingKey.value++;
-  }, 4400);
-
-  // 5400ms：正式揭晓
-  schedule(() => {
-    if (token !== animationToken) return;
     phase.value = 'reveal';
-  }, 5400);
+    playWinner();
+  }, 3500);
 }
 
 function handleClose() {
@@ -321,6 +316,7 @@ function handleClose() {
   phase.value = 'ignition';
   closeLottery();
   stopCollecting();
+  stopAll();
 }
 
 function handleAvatarError(e: Event) {
@@ -590,19 +586,6 @@ window.addEventListener('keydown', handleKeydown);
   font-size: 8px; letter-spacing: 2px; writing-mode: vertical-rl;
 }
 
-.candidate-card.locking { animation: lockCard 0.17s 4, lockGlow 0.7s ease-in-out infinite alternate; }
-
-.target-lock { position: absolute; inset: 14px; pointer-events: none; }
-
-.target-lock span {
-  position: absolute; width: 45px; height: 45px; border-color: #fff36d;
-  filter: drop-shadow(0 0 5px #fff) drop-shadow(0 0 12px #ffd22e);
-}
-
-.target-lock span:nth-child(1) { left: 0; top: 0; border-left: 4px solid; border-top: 4px solid; }
-.target-lock span:nth-child(2) { right: 0; top: 0; border-right: 4px solid; border-top: 4px solid; }
-.target-lock span:nth-child(3) { left: 0; bottom: 0; border-left: 4px solid; border-bottom: 4px solid; }
-.target-lock span:nth-child(4) { right: 0; bottom: 0; border-right: 4px solid; border-bottom: 4px solid; }
 
 /* 速度条 */
 .roulette-speed {
@@ -787,7 +770,6 @@ window.addEventListener('keydown', handleKeydown);
 
 /* 阶段特效 */
 .phase-ignition .lottery-arena { animation: ignitionShake 0.65s ease-out; }
-.phase-locking .energy-ring { border-color: rgba(255, 211, 45, 0.6); filter: drop-shadow(0 0 13px #ffc400); }
 
 .phase-reveal {
   background:
@@ -819,8 +801,6 @@ window.addEventListener('keydown', handleKeydown);
 @keyframes cardScan { to { left: calc(100% + 100px); } }
 @keyframes avatarRing { 50% { box-shadow: 0 0 22px var(--cyan), inset 0 0 24px rgba(33, 195, 255, 0.56); } }
 @keyframes speedPulse { from { opacity: 0.35; } to { opacity: 1; } }
-@keyframes lockCard { 0%, 100% { transform: translateX(0); } 35% { transform: translateX(-4px); } 70% { transform: translateX(4px); } }
-@keyframes lockGlow { from { filter: brightness(1) drop-shadow(0 0 7px rgba(255, 207, 37, 0.4)); } to { filter: brightness(1.35) drop-shadow(0 0 24px rgba(255, 207, 37, 0.85)); } }
 @keyframes winnerRays { to { transform: translate(-50%, -50%) rotate(360deg); } }
 @keyframes winnerCardFloat { 50% { transform: translateY(-7px); } }
 @keyframes winnerGlow { to { opacity: 1.5; transform: scale(1.18); } }

@@ -15,6 +15,7 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
+  assetsInclude: ['**/*.m4s'],
   server: {
     host: '0.0.0.0', // 允许局域网访问
     proxy: {
