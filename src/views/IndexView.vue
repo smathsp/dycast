@@ -92,10 +92,12 @@ import {
   type LiveRoom
 } from '@/core/dycast';
 import { verifyRoomNum, verifyWsUrl } from '@/utils/verifyUtil';
-import { ref, useTemplateRef } from 'vue';
+import { markRaw, ref, useTemplateRef } from 'vue';
 import { getHistory, addHistory, removeHistory, type HistoryItem } from '@/utils/historyUtil';
 import { CLog } from '@/utils/logUtil';
 import { getId } from '@/utils/idUtil';
+import { pushDanmu } from '@/danmu/store';
+import type { Danmu } from '@/danmu/types';
 import { RelayCast } from '@/core/relay';
 import SkMessage from '@/components/Message';
 import { formatDate } from '@/utils/commonUtil';
@@ -222,6 +224,18 @@ const handleMessages = function (msgs: DyMessage[]) {
       const msgId = `${msg.method}-${msg.id}`;
       if (castSet.has(msgId)) continue;
       castSet.add(msgId);
+      // 消息对象创建后不再修改，跳过响应式代理减少开销
+      markRaw(msg);
+      // 同步到弹幕抽奖 store（聊天和表情弹幕）
+      if (msg.method === CastMethod.CHAT || msg.method === CastMethod.EMOJI_CHAT) {
+        pushDanmu({
+          id: msg.id!,
+          avatar: msg.user?.avatar || '',
+          nickname: msg.user?.name || '匿名',
+          content: msg.content || '',
+          timestamp: msg.time || Date.now()
+        });
+      }
       switch (msg.method) {
         case CastMethod.CHAT:
           newCasts.push(msg);
@@ -271,8 +285,10 @@ const handleMessages = function (msgs: DyMessage[]) {
       }
     }
   } catch (err) {}
-  // 记录（限制上限）
-  allCasts.push(...newCasts);
+  // 记录（限制上限）—— 避免大数组展开导致栈溢出
+  for (let i = 0; i < newCasts.length; i++) {
+    allCasts.push(newCasts[i]);
+  }
   if (allCasts.length > MAX_CASTS) {
     allCasts.splice(0, allCasts.length - MAX_CASTS);
   }
@@ -353,6 +369,11 @@ const connectLive = function () {
       CLog.info(`DyCast 房间已关闭[${code}] => ${reason}`);
       connectStatus.value = 3;
       setRoomInputStatus(false);
+      // 主房间关闭时联动停止转发
+      if (relayWs) {
+        relayWs.close(1000, '主房间已断开');
+        relayWs = undefined;
+      }
       switch (code) {
         case DyCastCloseCode.NORMAL:
           SkMessage.success('断开成功');
@@ -403,6 +424,11 @@ const connectLive = function () {
 /** 断开连接 */
 const disconnectLive = function () {
   if (castWs) castWs.close(1000, '断开连接');
+  // 主房间断开时，联动停止转发
+  if (relayWs) {
+    relayWs.close(1000, '主房间已断开');
+    relayWs = undefined;
+  }
 };
 
 /** 连接转发房间 */
@@ -436,11 +462,26 @@ const relayCast = function () {
       setRelayInputStatus(false);
       relayStatus.value = 2;
     });
+    cast.on('reconnecting', count => {
+      CLog.warn(`RelayCast 重连中 => 第${count}次`);
+      SkMessage.warning(`转发重连中: ${count}`);
+      relayStatus.value = 1;
+    });
+    cast.on('reconnect', () => {
+      CLog.info('RelayCast 重连成功');
+      SkMessage.success('转发重连完成');
+      setRelayInputStatus(true);
+      relayStatus.value = 1;
+      // 重连后重新发送直播间信息
+      if (castWs) {
+        cast.send(JSON.stringify(castWs.getLiveInfo()));
+      }
+    });
     cast.connect();
     relayWs = cast;
   } catch (err) {
     CLog.error('弹幕转发出错:', err);
-    SkMessage.error('转发出错: ${err.message}');
+    SkMessage.error(`转发出错: ${(err as Error).message}`);
     setRelayInputStatus(false);
     relayStatus.value = 2;
     relayWs = void 0;

@@ -212,12 +212,12 @@ export const fetchMeInfo = async function () {
     });
     const url = `/dylive/webcast/user/me/?${makeUrlParams(params)}`;
     const res = await fetch(url).then(res => res.json());
-    if (res) return res;
-    else return Promise.reject(`Fetch Me Info Fail`);
-    if (res && res['status_code'] !== 0) {
+    if (!res) return Promise.reject('Fetch Me Info Fail');
+    if (res['status_code'] !== 0) {
       const msg = res?.data?.message;
       return Promise.reject(`Fetch Me Info Fail: status => ${res['status_code']}, msg => ${msg}`);
-    } else return res;
+    }
+    return res;
   } catch (err) {
     return Promise.reject(`Fetch Me Info Error: ${err}`);
   }

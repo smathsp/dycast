@@ -70,7 +70,8 @@ const SAMESITE_MAP: SameSiteMap = {
 export const getCookie = function (name: string) {
   let cookie: CustomCookie | null = null;
   // 用正则匹配对应cookie项，包括path、expires等信息
-  const reg = new RegExp(`(^|; )${name}=([^;]*)`);
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const reg = new RegExp(`(^|; )${escapedName}=([^;]*)`);
   const match = document.cookie.match(reg);
   if (match && match.length > 2) {
     cookie = {
@@ -126,7 +127,7 @@ export const setCookie = function (cookie: CustomCookie) {
   // cookie 组成表
   const cks: string[] = [];
   // 先构造键值对
-  cks.push(`${cookie.name}=${decodeURIComponent(cookie.value)}`);
+  cks.push(`${cookie.name}=${encodeURIComponent(cookie.value)}`);
   // 构造 cookie 其它属性
   for (const [key, value] of Object.entries(cookie)) {
     if (!value) continue;
@@ -171,7 +172,8 @@ export const removeCookie = function (name: string) {
  * @param name
  */
 export const hasCookie = function (name: string) {
-  const regex = new RegExp(`(^|; )${name}=`);
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(^|; )${escapedName}=`);
   return regex.test(document.cookie);
 };
 

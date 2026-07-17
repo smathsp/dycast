@@ -14,18 +14,18 @@
     <span class="prefix">$</span>
     <p class="content">
       <label class="nickname">[{{ user?.name ? user.name : 'unknown' }}]：</label>
-      <template v-for="item in doms">
+      <template v-for="(item, index) in doms" :key="index">
         <span v-if="item.node === 'text'" class="text">{{ item.text }}</span>
-        <span v-if="item.node === 'user'" class="atuser">{{ item.text }}</span>
-        <span v-if="item.node === 'touser'" class="touser">{{ item.text }}</span>
-        <img v-if="item.node === 'icon'" class="icon" :title="item.text" :src="item.url" :alt="item.text" />
-        <img v-if="item.node === 'emoji'" class="emoji" alt="会员表情" :src="item.url" />
+        <span v-else-if="item.node === 'user'" class="atuser">{{ item.text }}</span>
+        <span v-else-if="item.node === 'touser'" class="touser">{{ item.text }}</span>
+        <img v-else-if="item.node === 'icon'" class="icon" :title="item.text" :src="item.url" :alt="item.text" />
+        <img v-else-if="item.node === 'emoji'" class="emoji" alt="会员表情" :src="item.url" />
       </template>
     </p>
     <span class="gift-info" v-if="method === CastMethod.GIFT && gift">
       <span class="gift-name">{{ gift.name }}</span>
-      <span class="gift-price" v-if="settings.showGiftPrice && gift.price">×{{ gift.price }}抖币</span>
-      <span class="gift-total" v-if="settings.showGiftTotal && gift.price && gift.count && Number(gift.count) > 1">={{ giftTotal }}抖币</span>
+      <span class="gift-price" v-if="props.settings?.showGiftPrice && gift.price">×{{ gift.price }}抖币</span>
+      <span class="gift-total" v-if="props.settings?.showGiftTotal && gift.price && gift.count && Number(gift.count) > 1">={{ giftTotal }}抖币</span>
     </span>
   </div>
 </template>
@@ -34,7 +34,7 @@
 import { CastMethod, CastRtfContentType, type CastGift, type CastRtfContent, type CastUser } from '@/core/dycast';
 import { emojis } from '@/core/emoji';
 import { computed } from 'vue';
-import { useSettings } from '@/utils/settingUtil';
+import type { Settings } from '@/utils/settingUtil';
 
 /**
  * 格式化时间戳为 HH:mm:ss
@@ -61,12 +61,10 @@ interface CastItemProps {
   content?: string;
   rtfContent?: CastRtfContent[];
   time?: number;
+  settings?: Settings;
 }
 
 const props = withDefaults(defineProps<CastItemProps>(), {});
-
-/** 设置 */
-const settings = useSettings();
 
 /** 计算礼物总价 */
 const giftTotal = computed(() => {

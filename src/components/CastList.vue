@@ -38,7 +38,8 @@
               :gift="item.gift"
               :content="item.content"
               :rtf-content="item.rtfContent"
-              :time="item.time" />
+              :time="item.time"
+              :settings="settings" />
           </DynamicScrollerItem>
         </template>
       </DynamicScroller>
@@ -53,6 +54,7 @@ import type { CastType } from './CastTypeBtn/type';
 import CastItem from './CastItem.vue';
 import { CastMethod, type DyMessage } from '@/core/dycast';
 import { throttle } from '@/utils/loashUtil';
+import { useSettings } from '@/utils/settingUtil';
 
 // vue-virtual-scroller 基本原理
 // 生成一个大致等于总内容高的dom
@@ -71,6 +73,8 @@ const props = withDefaults(defineProps<CastListProps>(), {
   noPrefix: false,
   pos: 'center'
 });
+// 全局设置（父组件统一订阅，传递给子组件减少订阅点）
+const settings = useSettings();
 // 类型控制器
 const typeMap: Map<CastMethod, boolean> = new Map();
 
@@ -148,7 +152,9 @@ const addCasts = function (msgs: DyMessage[], isClear: boolean = false) {
   if (isClear) {
     casts.value = list;
   } else {
-    casts.value = [...casts.value, ...list];
+    // 直接 push 后通过新引用触发响应式更新，避免每次创建新数组
+    casts.value.push(...list);
+    casts.value = casts.value.slice();
   }
   // 使用 requestAnimationFrame 合并滚动操作
   scheduleScrollToBottom();

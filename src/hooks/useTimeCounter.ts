@@ -80,7 +80,10 @@ const useTimeCounter = function (opt: TimeCounterOptions = {}) {
    * 停止计时
    */
   const stop = () => {
-    if (timer) clearInterval(timer);
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
   };
 
   /**

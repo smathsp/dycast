@@ -1,0 +1,192 @@
+import { reactive } from 'vue';
+import type { Danmu, DanmuState, DanmuSettings } from './types';
+
+/** 屏幕最大同时显示弹幕数 */
+const MAX_ACTIVE = 100;
+
+/** 抽奖池最大容量 */
+const MAX_POOL_SIZE = 500000;
+
+/** localStorage keys */
+const STATE_KEY = 'dycast_danmu_state';
+const SETTINGS_KEY = 'dycast_danmu_settings';
+
+/** 默认设置 */
+const defaultSettings: DanmuSettings = {
+  lotteryThreshold: 10000,
+  fontSize: 15,
+  speedBase: 12,
+  speedRange: 3
+};
+
+// ===== BroadcastChannel =====
+const channel = new BroadcastChannel('dycast-danmu');
+
+// ===== 设置（独立持久化） =====
+function loadSettings(): DanmuSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) return { ...defaultSettings, ...JSON.parse(raw) };
+  } catch {}
+  return { ...defaultSettings };
+}
+
+function saveSettings(s: DanmuSettings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  } catch {}
+}
+
+export const settings = reactive<DanmuSettings>(loadSettings());
+
+export function updateSettings(partial: Partial<DanmuSettings>) {
+  Object.assign(settings, partial);
+  saveSettings(settings);
+}
+
+// ===== 状态恢复 =====
+function loadPersistedState() {
+  try {
+    const raw = localStorage.getItem(STATE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {};
+}
+
+const restored = loadPersistedState();
+
+const state = reactive<DanmuState>({
+  connected: false,
+  wsUrl: '',
+  totalDanmuCount: restored.totalDanmuCount || 0,
+  energy: restored.energy || 0,
+  lotteryPool: [],
+  activeDanmu: [],
+  isLotteryActive: false,
+  lotteryResult: null,
+  lotteryHistory: restored.lotteryHistory || [],
+  lotteryCount: restored.lotteryCount || 0
+});
+
+// 初始化 energy 基于当前阈值
+state.energy = state.totalDanmuCount % settings.lotteryThreshold;
+
+// ===== 持久化（节流 1 秒） =====
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+function persistState() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      localStorage.setItem(
+        STATE_KEY,
+        JSON.stringify({
+          totalDanmuCount: state.totalDanmuCount,
+          energy: state.energy,
+          lotteryCount: state.lotteryCount,
+          lotteryHistory: state.lotteryHistory.slice(-100)
+        })
+      );
+    } catch {}
+  }, 1000);
+}
+
+// ===== 弹幕操作 =====
+
+function _pushLocal(danmu: Danmu) {
+  state.totalDanmuCount++;
+  state.energy = state.totalDanmuCount % settings.lotteryThreshold;
+
+  // 加入抽奖池
+  state.lotteryPool.push(danmu);
+  if (state.lotteryPool.length > MAX_POOL_SIZE) {
+    state.lotteryPool.splice(0, state.lotteryPool.length - MAX_POOL_SIZE);
+  }
+
+  // 加入显示队列
+  state.activeDanmu.push(danmu);
+  if (state.activeDanmu.length > MAX_ACTIVE) {
+    state.activeDanmu.splice(0, state.activeDanmu.length - MAX_ACTIVE);
+  }
+
+  persistState();
+
+  // 检测触发抽奖
+  if (state.energy === 0 && state.totalDanmuCount > 0) {
+    triggerLottery();
+  }
+}
+
+export function pushDanmu(danmu: Danmu) {
+  _pushLocal(danmu);
+  try {
+    channel.postMessage({ type: 'danmu', data: danmu });
+  } catch {}
+}
+
+export function removeActiveDanmu(id: string) {
+  const idx = state.activeDanmu.findIndex(d => d.id === id);
+  if (idx !== -1) state.activeDanmu.splice(idx, 1);
+}
+
+function triggerLottery() {
+  if (state.lotteryPool.length === 0) return;
+  state.isLotteryActive = true;
+}
+
+export function drawLottery(): Danmu {
+  const pool = state.lotteryPool;
+  const index = Math.floor(Math.random() * pool.length);
+  const winner = { ...pool[index] };
+
+  state.lotteryResult = winner;
+  state.lotteryCount++;
+  state.lotteryHistory.push(winner);
+  persistState();
+
+  return winner;
+}
+
+export function closeLottery() {
+  state.isLotteryActive = false;
+  state.lotteryResult = null;
+}
+
+export function setConnected(val: boolean) {
+  state.connected = val;
+}
+
+export function resetDanmuState() {
+  state.totalDanmuCount = 0;
+  state.energy = 0;
+  state.lotteryPool.length = 0;
+  state.activeDanmu.length = 0;
+  state.isLotteryActive = false;
+  state.lotteryResult = null;
+  persistState();
+}
+
+export function clearLotteryHistory() {
+  state.lotteryHistory.length = 0;
+  state.lotteryCount = 0;
+  persistState();
+}
+
+// ===== 监听 =====
+
+export function startListening() {
+  channel.onmessage = (event) => {
+    const msg = event.data;
+    if (msg.type === 'danmu' && msg.data) {
+      _pushLocal(msg.data);
+    }
+  };
+}
+
+export function stopListening() {
+  channel.onmessage = null;
+}
+
+export function useDanmuState() {
+  return state;
+}

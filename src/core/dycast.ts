@@ -26,6 +26,7 @@ import type {
 } from './model';
 import { fetchUser, getImInfo, getLiveInfo } from './request';
 import { getSignature } from './signature';
+import { makeUrlParams } from './util';
 // import { logUserCast } from '@/utils/debugUtil';
 
 /**
@@ -755,7 +756,7 @@ export class DyCast {
    */
   private _dealMessage(msg: Message) {
     const method = msg.method;
-    const data: DyMessage | null = {};
+    const data: DyMessage = {};
     data.id = msg.msgId;
     let message = null;
     let payload = msg.payload;
@@ -1012,22 +1013,10 @@ export class DyCast {
    * @param logId
    */
   private _ack(ext: string = '', logId?: string) {
-    const getPayload = function (_ext: string) {
-      let arr = [];
-      for (let s of _ext) {
-        let index = s.charCodeAt(0);
-        index < 128
-          ? arr.push(index)
-          : index < 2048
-            ? (arr.push(192 + (index >> 6)), arr.push(128 + (63 & index)))
-            : index < 65536 &&
-              (arr.push(224 + (index >> 12)), arr.push(128 + ((index >> 6) & 63)), arr.push(128 + (63 & index)));
-      }
-      return new Uint8Array(arr);
-    };
+    const payload = new TextEncoder().encode(ext);
     return encodePushFrame({
       payloadType: PayloadType.Ack,
-      payload: getPayload(ext),
+      payload,
       logId
     }) as Uint8Array<ArrayBuffer>;
   }
@@ -1075,10 +1064,7 @@ export class DyCast {
    * @returns
    */
   private _mergeOptions(opts: any): string {
-    return Object.keys(opts).reduce((t, n) => {
-      let r;
-      return `${t}${t ? '&' : ''}${n}=${null != (r = opts[n]) ? r : ''}`;
-    }, '');
+    return makeUrlParams(opts);
   }
 
   /**

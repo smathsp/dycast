@@ -2,18 +2,21 @@
 @font-face {
   font-family: 'dymht';
   src: url('./DouyinSansBold.otf') format('opentype');
+  font-display: swap;
 }
 
 /* 猫啃忘形圆 */
 @font-face {
   font-family: 'mkwxy';
   src: url('./MaoKenWangXingYuan.ttf') format('truetype');
+  font-display: swap;
 }
 
 /* 图标 */
 @font-face {
   font-family: "castfont";
   src: url('./castfont.ttf') format('truetype');
+  font-display: swap;
 }
 
 [class*=' ice-'],
