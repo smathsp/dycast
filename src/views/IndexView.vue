@@ -92,7 +92,7 @@ import {
   type LiveRoom
 } from '@/core/dycast';
 import { verifyRoomNum, verifyWsUrl } from '@/utils/verifyUtil';
-import { markRaw, ref, useTemplateRef } from 'vue';
+import { markRaw, onMounted, ref, useTemplateRef } from 'vue';
 import { getHistory, addHistory, removeHistory, type HistoryItem } from '@/utils/historyUtil';
 import { CLog } from '@/utils/logUtil';
 import { getId } from '@/utils/idUtil';
@@ -342,12 +342,16 @@ function clearMessageList() {
 /**
  * 连接房间
  */
+const LAST_ROOM_KEY = 'dycast_last_room';
+
 const connectLive = function () {
   try {
     // 清空上一次连接的消息
     clearMessageList();
     CLog.debug('正在连接:', roomNum.value);
     SkMessage.info(`正在连接：${roomNum.value}`);
+    // 保存房间号用于刷新后自动重连
+    localStorage.setItem(LAST_ROOM_KEY, roomNum.value);
     const cast = new DyCast(roomNum.value);
     cast.on('open', (ev, info) => {
       CLog.info('DyCast 房间连接成功');
@@ -548,6 +552,15 @@ const handleSelectHistory = function (value: string) {
 const handleDeleteHistory = function (value: string) {
   roomHistory.value = removeHistory(value);
 };
+
+// 刷新后自动重连上次的房间
+onMounted(() => {
+  const lastRoom = localStorage.getItem(LAST_ROOM_KEY);
+  if (lastRoom) {
+    roomNum.value = lastRoom;
+    connectLive();
+  }
+});
 </script>
 
 <style lang="scss" scoped>

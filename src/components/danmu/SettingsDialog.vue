@@ -99,7 +99,7 @@
             <div class="reset-row">
               <div class="reset-info">
                 <span class="reset-label">清零累计弹幕和能量</span>
-                <span class="reset-desc">当前累计 {{ state.totalDanmuCount.toLocaleString() }} 条</span>
+                <span class="reset-desc">当前累计 {{ state.totalPoolCount.toLocaleString() }} 条</span>
               </div>
               <button class="reset-btn" @click="handleReset">重置</button>
             </div>

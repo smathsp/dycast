@@ -127,7 +127,7 @@
 
       <span>
         累计弹幕
-        <strong>{{ state.totalDanmuCount.toLocaleString() }}</strong>
+        <strong>{{ state.totalPoolCount.toLocaleString() }}</strong>
       </span>
     </footer>
   </section>

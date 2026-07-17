@@ -23,10 +23,15 @@ export function getHistory(): HistoryItem[] {
         return item;
       });
     }
-    return [];
+    return getDefaultHistory();
   } catch {
-    return [];
+    return getDefaultHistory();
   }
+}
+
+/** 默认历史记录 */
+function getDefaultHistory(): HistoryItem[] {
+  return [{ roomNum: '194594114480' }];
 }
 
 /**

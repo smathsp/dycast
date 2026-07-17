@@ -58,7 +58,9 @@ const restored = loadPersistedState();
 const state = reactive<DanmuState>({
   connected: false,
   wsUrl: '',
+  isCollecting: false,
   totalDanmuCount: restored.totalDanmuCount || 0,
+  totalPoolCount: restored.totalPoolCount || 0,
   energy: restored.energy || 0,
   lotteryPool: [],
   activeDanmu: [],
@@ -82,6 +84,7 @@ function persistState() {
         STATE_KEY,
         JSON.stringify({
           totalDanmuCount: state.totalDanmuCount,
+          totalPoolCount: state.totalPoolCount,
           energy: state.energy,
           lotteryCount: state.lotteryCount,
           lotteryHistory: state.lotteryHistory.slice(-100)
@@ -94,14 +97,18 @@ function persistState() {
 // ===== 弹幕操作 =====
 
 function _pushLocal(danmu: Danmu) {
-  state.totalDanmuCount++;
-  state.energy = state.totalDanmuCount % settings.lotteryThreshold;
-
-  // 加入抽奖池
+  // 始终加入抽奖池（不论是否在攒能量）
   state.lotteryPool.push(danmu);
+  state.totalPoolCount++;
   if (state.lotteryPool.length > MAX_POOL_SIZE) {
     state.lotteryPool.splice(0, state.lotteryPool.length - MAX_POOL_SIZE);
   }
+
+  // 只有在攒能量状态下才累计和显示
+  if (!state.isCollecting) return;
+
+  state.totalDanmuCount++;
+  state.energy = state.totalDanmuCount % settings.lotteryThreshold;
 
   // 加入显示队列
   state.activeDanmu.push(danmu);
@@ -127,6 +134,20 @@ export function pushDanmu(danmu: Danmu) {
 export function removeActiveDanmu(id: string) {
   const idx = state.activeDanmu.findIndex(d => d.id === id);
   if (idx !== -1) state.activeDanmu.splice(idx, 1);
+}
+
+/** 开始攒能量（能量从 0 开始） */
+export function startCollecting() {
+  state.isCollecting = true;
+  state.totalDanmuCount = 0;
+  state.energy = 0;
+  state.activeDanmu.length = 0;
+}
+
+/** 停止攒能量（保留数据，只是停止显示和累计） */
+export function stopCollecting() {
+  state.isCollecting = false;
+  state.activeDanmu.length = 0;
 }
 
 function triggerLottery() {
@@ -158,6 +179,7 @@ export function setConnected(val: boolean) {
 
 export function resetDanmuState() {
   state.totalDanmuCount = 0;
+  state.totalPoolCount = 0;
   state.energy = 0;
   state.lotteryPool.length = 0;
   state.activeDanmu.length = 0;

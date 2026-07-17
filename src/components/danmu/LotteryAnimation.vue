@@ -166,8 +166,8 @@
               </div>
 
               <button class="close-button" type="button" @click="handleClose">
-                <span>继续直播</span>
-                <small>CONTINUE</small>
+                <span>完成</span>
+                <small>DONE</small>
               </button>
             </section>
           </Transition>
@@ -179,7 +179,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue';
-import { useDanmuState, settings, drawLottery, closeLottery } from '@/danmu/store';
+import { useDanmuState, settings, drawLottery, closeLottery, stopCollecting } from '@/danmu/store';
 import type { Danmu } from '@/danmu/types';
 
 type LotteryPhase = 'ignition' | 'rolling' | 'locking' | 'reveal';
@@ -320,6 +320,7 @@ function handleClose() {
   visible.value = false;
   phase.value = 'ignition';
   closeLottery();
+  stopCollecting();
 }
 
 function handleAvatarError(e: Event) {

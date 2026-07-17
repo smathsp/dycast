@@ -13,11 +13,15 @@ export interface DanmuState {
   connected: boolean;
   /** 当前 WS 地址 */
   wsUrl: string;
-  /** 累计弹幕数量 */
+  /** 是否正在攒能量（手动控制） */
+  isCollecting: boolean;
+  /** 累计弹幕数量（当前轮） */
   totalDanmuCount: number;
+  /** 历史弹幕总计数（持久化，不随刷新丢失） */
+  totalPoolCount: number;
   /** 当前能量 (0-9999) */
   energy: number;
-  /** 抽奖池（全部历史弹幕） */
+  /** 抽奖池（全部历史弹幕，始终收集） */
   lotteryPool: Danmu[];
   /** 当前屏幕显示的弹幕 */
   activeDanmu: Danmu[];
