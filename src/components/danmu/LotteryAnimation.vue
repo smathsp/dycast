@@ -175,7 +175,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount } from 'vue';
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useDanmuState, settings, drawLottery, closeLottery, stopCollecting } from '@/danmu/store';
 import { stopCharging, playLottery, playWinner, stopAll } from '@/danmu/audio';
 import type { Danmu } from '@/danmu/types';
@@ -338,14 +338,16 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// 键盘监听（在 onMounted 中注册，避免模块级副作用）
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown);
+});
+
 onBeforeUnmount(() => {
   clearAnimation();
   document.body.style.overflow = '';
   window.removeEventListener('keydown', handleKeydown);
 });
-
-// 键盘监听
-window.addEventListener('keydown', handleKeydown);
 </script>
 
 <style scoped>

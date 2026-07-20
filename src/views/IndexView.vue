@@ -231,13 +231,19 @@ const handleMessages = function (msgs: DyMessage[]) {
       markRaw(msg);
       // 同步到弹幕抽奖 store（聊天和表情弹幕）
       if (msg.method === CastMethod.CHAT || msg.method === CastMethod.EMOJI_CHAT) {
-        pushDanmu({
+        const danmu = {
           id: msg.id!,
           avatar: msg.user?.avatar || '',
           nickname: msg.user?.name || '匿名',
           content: msg.content || '',
-          timestamp: msg.time || Date.now()
-        });
+          timestamp: msg.time || Date.now(),
+          fansClub: msg.user?.fansClub
+        };
+        pushDanmu(danmu);
+        // Electron 环境下通过 IPC 转发给弹幕窗口
+        if (window.electronAPI?.sendDanmu) {
+          window.electronAPI.sendDanmu(danmu);
+        }
       }
       switch (msg.method) {
         case CastMethod.CHAT:
@@ -271,6 +277,10 @@ const handleMessages = function (msgs: DyMessage[]) {
           newCasts.push(msg);
           mainCasts.push(msg);
           break;
+        case CastMethod.FANSCLUB:
+          newCasts.push(msg);
+          otherCasts.push(msg);
+          break;
         case CastMethod.ROOM_USER_SEQ:
           setRoomCount(msg.room);
           break;
@@ -287,7 +297,7 @@ const handleMessages = function (msgs: DyMessage[]) {
           break;
       }
     }
-  } catch (err) {}
+  } catch (err) { console.warn('[handleMessages] 消息处理出错:', err); }
   // 记录（限制上限）—— 避免大数组展开导致栈溢出
   for (let i = 0; i < newCasts.length; i++) {
     allCasts.push(newCasts[i]);

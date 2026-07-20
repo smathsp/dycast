@@ -13,26 +13,58 @@
           <div class="section">
             <h3 class="section-title">🎰 抽奖设置</h3>
             <div class="form-row">
-              <label class="form-label">每累计多少条弹幕抽一次</label>
+              <label class="form-label">抽奖阈值</label>
               <div class="form-input-group">
+                <button class="step-btn" @click="updateSettings({ lotteryThreshold: Math.max(100, settings.lotteryThreshold - 100) })">−</button>
                 <input
-                  class="form-input"
+                  class="form-input threshold-input"
                   type="number"
-                  :value="settings.lotteryThreshold"
-                  @input="onThresholdChange"
+                  :value="thresholdDisplay"
+                  @input="thresholdDisplay = Number(($event.target as HTMLInputElement).value)"
+                  @blur="onThresholdBlur"
+                  @keyup.enter="($event.target as HTMLInputElement).blur()"
                   min="100"
                   step="100" />
+                <button class="step-btn" @click="updateSettings({ lotteryThreshold: settings.lotteryThreshold + 100 })">+</button>
                 <span class="form-unit">条</span>
               </div>
             </div>
             <div class="preset-btns">
               <button
-                v-for="v in [1000, 5000, 10000, 50000]"
+                v-for="v in [100, 200, 500, 1000, 2000]"
                 :key="v"
                 class="preset-btn"
                 :class="{ active: settings.lotteryThreshold === v }"
                 @click="updateSettings({ lotteryThreshold: v })">
                 {{ formatNum(v) }}
+              </button>
+            </div>
+            <div class="form-row" style="margin-top: 14px;">
+              <label class="form-label">最低灯牌等级</label>
+              <div class="form-input-group">
+                <button class="step-btn" @click="updateSettings({ minFansLevel: Math.max(0, settings.minFansLevel - 1) })">−</button>
+                <input
+                  class="form-input threshold-input"
+                  type="number"
+                  :value="fansLevelDisplay"
+                  @input="fansLevelDisplay = Number(($event.target as HTMLInputElement).value)"
+                  @blur="onFansLevelBlur"
+                  @keyup.enter="($event.target as HTMLInputElement).blur()"
+                  min="0"
+                  max="50"
+                  step="1" />
+                <button class="step-btn" @click="updateSettings({ minFansLevel: settings.minFansLevel + 1 })">+</button>
+                <span class="form-unit">级</span>
+              </div>
+            </div>
+            <div class="preset-btns">
+              <button
+                v-for="v in [0, 1, 3, 5, 10]"
+                :key="v"
+                class="preset-btn"
+                :class="{ active: settings.minFansLevel === v }"
+                @click="updateSettings({ minFansLevel: v })">
+                {{ v === 0 ? '不限' : `Lv${v}+` }}
               </button>
             </div>
           </div>
@@ -70,29 +102,6 @@
             </div>
           </div>
 
-          <!-- 中奖记录 -->
-          <div class="section">
-            <h3 class="section-title">
-              🏆 中奖记录
-              <span class="record-count">共 {{ state.lotteryCount }} 次</span>
-              <button v-if="state.lotteryHistory.length" class="clear-btn" @click="clearLotteryHistory">清空</button>
-            </h3>
-            <div class="history-list" v-if="state.lotteryHistory.length">
-              <div
-                class="history-item"
-                v-for="(item, idx) in reversedHistory"
-                :key="idx">
-                <span class="history-rank">#{{ state.lotteryHistory.length - idx }}</span>
-                <img v-if="item.avatar" class="history-avatar" :src="item.avatar" alt="" />
-                <div class="history-info">
-                  <span class="history-nickname">{{ item.nickname }}</span>
-                  <span class="history-content">"{{ item.content }}"</span>
-                </div>
-              </div>
-            </div>
-            <div class="history-empty" v-else>暂无中奖记录</div>
-          </div>
-
           <!-- 重置 -->
           <div class="section">
             <h3 class="section-title">⚠️ 数据重置</h3>
@@ -111,15 +120,39 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import { useDanmuState, settings, updateSettings, clearLotteryHistory, resetDanmuState } from '@/danmu/store';
+import { ref, watch } from 'vue';
+import { useDanmuState, settings, updateSettings, resetDanmuState } from '@/danmu/store';
 
-defineProps<{ visible: boolean }>();
+const props = defineProps<{ visible: boolean }>();
 defineEmits<{ (e: 'close'): void }>();
 
 const state = useDanmuState();
 
-const reversedHistory = computed(() => [...state.lotteryHistory].reverse());
+// 输入框临时值（失焦时才提交）
+const thresholdDisplay = ref(settings.lotteryThreshold);
+const fansLevelDisplay = ref(settings.minFansLevel);
+
+// 设置弹窗打开时同步显示值
+watch(() => props.visible, (v) => {
+  if (v) {
+    thresholdDisplay.value = settings.lotteryThreshold;
+    fansLevelDisplay.value = settings.minFansLevel;
+  }
+});
+
+// 预设按钮点击时也同步显示值
+watch(() => settings.lotteryThreshold, (v) => { thresholdDisplay.value = v; });
+watch(() => settings.minFansLevel, (v) => { fansLevelDisplay.value = v; });
+
+function onThresholdBlur() {
+  const v = Math.max(1, Math.round(thresholdDisplay.value));
+  updateSettings({ lotteryThreshold: v });
+}
+
+function onFansLevelBlur() {
+  const v = Math.max(0, Math.round(fansLevelDisplay.value));
+  updateSettings({ minFansLevel: v });
+}
 
 function formatNum(n: number) {
   if (n >= 10000) return `${n / 10000}万`;
@@ -133,10 +166,6 @@ function handleReset() {
   }
 }
 
-function onThresholdChange(e: Event) {
-  const v = Math.max(100, Number((e.target as HTMLInputElement).value));
-  updateSettings({ lotteryThreshold: v });
-}
 function onFontSizeChange(e: Event) {
   updateSettings({ fontSize: Number((e.target as HTMLInputElement).value) });
 }
@@ -281,9 +310,48 @@ $accent: #00e5ff;
   font-size: 14px;
   text-align: center;
   outline: none;
+  transition: border-color 0.15s;
 
   &:focus {
     border-color: $accent;
+    box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.15);
+  }
+
+  &::-webkit-inner-spin-button,
+  &::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  -moz-appearance: textfield;
+}
+
+.threshold-input {
+  width: 80px;
+}
+
+.step-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+
+  &:hover {
+    background: rgba(0, 229, 255, 0.15);
+    border-color: $accent;
+    color: $accent;
+  }
+
+  &:active {
+    transform: scale(0.92);
   }
 }
 
@@ -331,74 +399,6 @@ $accent: #00e5ff;
     border-color: $accent;
     color: $accent;
   }
-}
-
-// ===== 中奖记录 =====
-.history-list {
-  max-height: 240px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-
-  &::-webkit-scrollbar {
-    width: 4px;
-  }
-  &::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 2px;
-  }
-}
-
-.history-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
-
-  .history-rank {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.25);
-    min-width: 28px;
-  }
-
-  .history-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    object-fit: cover;
-    flex-shrink: 0;
-  }
-
-  .history-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .history-nickname {
-    display: block;
-    font-size: 13px;
-    color: $gold;
-    font-weight: bold;
-  }
-
-  .history-content {
-    display: block;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
-.history-empty {
-  text-align: center;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.2);
-  padding: 16px 0;
 }
 
 // ===== 重置 =====

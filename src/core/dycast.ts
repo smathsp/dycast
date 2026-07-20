@@ -5,6 +5,7 @@ import {
   decodeChatMessage,
   decodeControlMessage,
   decodeEmojiChatMessage,
+  decodeFansclubMessage,
   decodeGiftMessage,
   decodeLikeMessage,
   decodeMemberMessage,
@@ -70,6 +71,8 @@ export interface DyLiveInfo {
   nickname: string;
   title: string;
   status: number;
+  /** 主播 sec_uid */
+  anchorId?: string;
 }
 /** 直播间信息-初次连接信息 */
 export interface DyImInfo {
@@ -91,6 +94,16 @@ export interface LiveRankItem {
   rank: number | string;
 }
 
+/** 粉丝团/灯牌信息 */
+export interface CastUserFansClub {
+  /** 粉丝团名称 */
+  clubName?: string;
+  /** 粉丝团等级 1-30 */
+  level?: number;
+  /** 灯牌图标 URL */
+  badgeIcon?: string;
+}
+
 export interface CastUser {
   // user.sec_uid | user.id_str
   id?: string;
@@ -100,6 +113,8 @@ export interface CastUser {
   avatar?: string;
   // 性别 0 | 1 | 2 => 未知 | 男 | 女
   gender?: number;
+  /** 粉丝团/灯牌信息 */
+  fansClub?: CastUserFansClub;
 }
 
 export interface CastGift {
@@ -828,6 +843,12 @@ export class DyCast {
           data.method = CastMethod.ROOM_STATS;
           data.room = { audienceCount: message.displayMiddle };
           break;
+        case CastMethod.FANSCLUB:
+          message = decodeFansclubMessage(payload);
+          data.method = CastMethod.FANSCLUB;
+          data.user = this._getCastUser(message.user);
+          data.content = message.content || '加入粉丝团';
+          break;
       }
       if (!data.method) return null;
     } catch (err) {
@@ -881,12 +902,40 @@ export class DyCast {
    */
   private _getCastUser(data?: User): CastUser | undefined {
     if (!data) return void 0;
-    return {
+    const user: CastUser = {
       id: data.secUid,
       name: data.nickname,
       gender: data.gender,
       avatar: data.avatarThumb?.urlList?.[0]
     };
+    // 提取当前主播的粉丝灯牌信息
+    const fansClub = data.fansClub;
+    if (fansClub) {
+      // 优先从 preferData 中匹配当前主播
+      let fc = undefined as typeof fansClub.data;
+      const anchorId = this.info.anchorId;
+      if (anchorId && fansClub.preferData) {
+        for (const key in fansClub.preferData) {
+          const entry = fansClub.preferData[key];
+          if (entry?.anchorId === anchorId) {
+            fc = entry;
+            break;
+          }
+        }
+      }
+      // 未匹配到则回退到默认 data
+      if (!fc) fc = fansClub.data;
+      if (fc && fc.level && fc.level > 0) {
+        const level = fc.level;
+        const badgeIcon = fc.badge?.icons?.[level]?.urlList?.[0];
+        user.fansClub = {
+          clubName: fc.clubName,
+          level,
+          badgeIcon
+        };
+      }
+    }
+    return user;
   }
 
   /**

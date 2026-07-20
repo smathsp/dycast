@@ -5,6 +5,12 @@ export interface Danmu {
   nickname: string;
   content: string;
   timestamp: number;
+  /** 粉丝团/灯牌信息 */
+  fansClub?: {
+    clubName?: string;
+    level?: number;
+    badgeIcon?: string;
+  };
 }
 
 /** 弹幕全局状态 */
@@ -63,4 +69,6 @@ export interface DanmuSettings {
   speedBase: number;
   /** 弹幕速度浮动范围 (秒) */
   speedRange: number;
+  /** 最低粉丝灯牌等级（0=不限制） */
+  minFansLevel: number;
 }

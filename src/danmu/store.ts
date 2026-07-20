@@ -16,7 +16,8 @@ const defaultSettings: DanmuSettings = {
   lotteryThreshold: 10000,
   fontSize: 15,
   speedBase: 12,
-  speedRange: 3
+  speedRange: 3,
+  minFansLevel: 0
 };
 
 // ===== BroadcastChannel =====
@@ -90,13 +91,19 @@ function persistState() {
           lotteryHistory: state.lotteryHistory.slice(-100)
         })
       );
-    } catch {}
+    } catch (e) { console.warn('[store] 状态持久化失败:', e); }
   }, 1000);
 }
 
 // ===== 弹幕操作 =====
 
 function _pushLocal(danmu: Danmu) {
+  // 粉丝灯牌等级过滤
+  const fansLevel = danmu.fansClub?.level || 0;
+  if (settings.minFansLevel > 0 && fansLevel < settings.minFansLevel) {
+    return; // 等级不够，不参与抽奖也不显示
+  }
+
   // 始终加入抽奖池（不论是否在攒能量）
   state.lotteryPool.push(danmu);
   state.totalPoolCount++;
@@ -141,13 +148,13 @@ export function startCollecting() {
   state.isCollecting = true;
   state.totalDanmuCount = 0;
   state.energy = 0;
-  state.activeDanmu.length = 0;
+  state.activeDanmu.splice(0);
 }
 
 /** 停止攒能量（保留数据，只是停止显示和累计） */
 export function stopCollecting() {
   state.isCollecting = false;
-  state.activeDanmu.length = 0;
+  state.activeDanmu.splice(0);
 }
 
 function triggerLottery() {
@@ -181,28 +188,46 @@ export function resetDanmuState() {
   state.totalDanmuCount = 0;
   state.totalPoolCount = 0;
   state.energy = 0;
-  state.lotteryPool.length = 0;
-  state.activeDanmu.length = 0;
+  state.lotteryPool.splice(0);
+  state.activeDanmu.splice(0);
   state.isLotteryActive = false;
   state.lotteryResult = null;
   persistState();
 }
 
 export function clearLotteryHistory() {
-  state.lotteryHistory.length = 0;
+  state.lotteryHistory.splice(0);
   state.lotteryCount = 0;
+  persistState();
+}
+
+export function deleteLotteryItems(ids: Set<string>) {
+  state.lotteryHistory = state.lotteryHistory.filter(d => !ids.has(d.id));
+  state.lotteryCount = state.lotteryHistory.length;
   persistState();
 }
 
 // ===== 监听 =====
 
 export function startListening() {
+  // BroadcastChannel 监听（同源非 Electron 环境）
   channel.onmessage = (event) => {
     const msg = event.data;
     if (msg.type === 'danmu' && msg.data) {
       _pushLocal(msg.data);
     }
   };
+  // Electron IPC 监听（跨窗口通信）
+  const api = (window as any).electronAPI;
+  if (api?.onDanmu) {
+    api.onDanmu((danmu: Danmu) => {
+      _pushLocal(danmu);
+    });
+    // 请求回放缓存的弹幕
+    if (api.requestBuffer) {
+      api.requestBuffer();
+    }
+  }
 }
 
 export function stopListening() {

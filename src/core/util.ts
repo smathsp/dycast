@@ -73,7 +73,8 @@ export const parseLiveHtml = function (html: string): DyLiveInfo | null {
         /{"state":{[\s\S]*?"roomStore":{[\s\S]*?"roomInfo":{[\s\S]*?"room":{[\s\S]*?"cover":{[\s\S]*?"url_list":\["([\S]+?)"/,
       nickname: /{"state":{[\s\S]*?"roomStore":{[\s\S]*?"roomInfo":{[\s\S]*?"anchor":{[\s\S]*?"nickname":"([\s\S]+?)"/,
       title: /{"state":{[\s\S]*?"roomStore":{[\s\S]*?"roomInfo":{[\s\S]*?"room":{[\s\S]*?"title":"([\s\S]+?)"/,
-      status: /{"state":{[\s\S]*?"roomStore":{[\s\S]*?"roomInfo":{[\s\S]*?"room":{[\s\S]*?"status":([0-9]{1})/
+      status: /{"state":{[\s\S]*?"roomStore":{[\s\S]*?"roomInfo":{[\s\S]*?"room":{[\s\S]*?"status":([0-9]{1})/,
+      anchorId: /{"state":{[\s\S]*?"roomStore":{[\s\S]*?"roomInfo":{[\s\S]*?"anchor":{[\s\S]*?"sec_uid":"([\s\S]+?)"/
     };
     function extractJsonField(name: string, json: string) {
       const reg = REGMAP[name];
@@ -96,6 +97,7 @@ export const parseLiveHtml = function (html: string): DyLiveInfo | null {
     const nickname = extractJsonField('nickname', json);
     const title = extractJsonField('title', json);
     const status = extractJsonField('status', json);
+    const anchorId = extractJsonField('anchorId', json);
     return {
       roomId,
       uniqueId,
@@ -103,7 +105,8 @@ export const parseLiveHtml = function (html: string): DyLiveInfo | null {
       cover: decodeUnicodeUrl(cover),
       nickname,
       title,
-      status: parseInt(status || '4')
+      status: parseInt(status || '4'),
+      anchorId
     };
   } catch (err) {
     return null;

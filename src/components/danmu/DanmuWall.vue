@@ -12,14 +12,15 @@
       }"
       @animationend="onDanmuEnd(item.id)">
       <img v-if="item.avatar" class="danmu-avatar" :src="item.avatar" alt="" />
+      <span v-if="item.fansClub?.level" class="danmu-fans-level">{{ item.fansClub.level }}</span>
       <span class="danmu-nickname">{{ item.nickname || '匿名' }}：</span>
-      <span class="danmu-content" v-html="parseContent(item.content)"></span>
+      <span class="danmu-content" v-html="item._parsedContent"></span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watchEffect } from 'vue';
 import { useDanmuState, settings, removeActiveDanmu } from '@/danmu/store';
 import { emojis } from '@/core/emoji';
 import type { Danmu } from '@/danmu/types';
@@ -31,6 +32,7 @@ let trackPointer = 0;
 interface DisplayDanmu extends Danmu {
   _y: number;
   _speed: number;
+  _parsedContent: string;
 }
 
 const state = useDanmuState();
@@ -43,11 +45,23 @@ function nextTrack(): number {
 }
 
 /**
- * 解析弹幕内容，将 [捂脸] 等标签转为 emoji 图片
+ * 转义 HTML 实体，防止 XSS 注入
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * 解析弹幕内容，先转义 HTML，再将 [捂脸] 等标签转为 emoji 图片
  */
 function parseContent(content?: string): string {
   if (!content) return '';
-  return content.replace(/\[([^\]]+)\]/g, (match) => {
+  const safe = escapeHtml(content);
+  return safe.replace(/\[([^\]]+)\]/g, (match) => {
     const url = emojis[match];
     if (url) {
       return `<img class="danmu-emoji" src="${url}" alt="${match}" />`;
@@ -56,31 +70,33 @@ function parseContent(content?: string): string {
   });
 }
 
-watch(
-  () => state.activeDanmu,
-  (arr) => {
-    const displayedIds = new Set(displayDanmu.value.map(d => d.id));
-    const newcomers = arr.filter(d => !displayedIds.has(d.id));
+/** 持久化的已显示弹幕 ID 集合，避免每次 watcher 重建 */
+const displayedIds = new Set<string>();
 
-    for (const danmu of newcomers) {
-      const track = nextTrack();
-      const y = (track / TRACK_COUNT) * 80 + 5 + Math.random() * 4;
-      const speed = settings.speedBase + Math.random() * settings.speedRange;
-      displayDanmu.value.push({
-        ...danmu,
-        _y: y,
-        _speed: speed
-      });
-    }
-  },
-  { deep: true }
-);
+watchEffect(() => {
+  const arr = state.activeDanmu;
+  const newcomers = arr.filter(d => !displayedIds.has(d.id));
+
+  for (const danmu of newcomers) {
+    displayedIds.add(danmu.id);
+    const track = nextTrack();
+    const y = (track / TRACK_COUNT) * 80 + 5 + Math.random() * 4;
+    const speed = settings.speedBase + Math.random() * settings.speedRange;
+    displayDanmu.value.push({
+      ...danmu,
+      _y: y,
+      _speed: speed,
+      _parsedContent: parseContent(danmu.content)
+    });
+  }
+});
 
 function onDanmuEnd(id: string) {
   const idx = displayDanmu.value.findIndex(d => d.id === id);
   if (idx !== -1) {
     displayDanmu.value.splice(idx, 1);
   }
+  displayedIds.delete(id);
   removeActiveDanmu(id);
 }
 </script>
@@ -124,6 +140,13 @@ function onDanmuEnd(id: string) {
     color: #64d8ff;
     font-weight: 800;
     font-size: 1em;
+    flex-shrink: 0;
+  }
+
+  .danmu-fans-level {
+    color: #ffb84d;
+    font-size: 0.85em;
+    font-weight: 600;
     flex-shrink: 0;
   }
 

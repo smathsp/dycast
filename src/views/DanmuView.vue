@@ -1,5 +1,12 @@
 <template>
   <div class="danmu-view">
+    <!-- 左上角隐藏历史按钮 -->
+    <div class="history-zone">
+      <button class="history-btn" @click.stop="showHistory = true" title="中奖记录">
+        <span class="trophy-icon">🏆</span>
+      </button>
+    </div>
+
     <!-- 右上角隐藏设置按钮 -->
     <div class="settings-zone">
       <button class="settings-btn" @click.stop="showSettings = true" title="设置">
@@ -27,6 +34,14 @@
     <LotteryAnimation />
     <!-- 设置弹窗 -->
     <SettingsDialog :visible="showSettings" @close="showSettings = false" />
+    <!-- 中奖记录 -->
+    <WinnerHistoryModal
+      :visible="showHistory"
+      :winners="state.lotteryHistory"
+      :draw-no="state.lotteryCount"
+      @close="showHistory = false"
+      @clear="handleClearHistory"
+    />
   </div>
 </template>
 
@@ -37,15 +52,23 @@ import DanmuWall from '@/components/danmu/DanmuWall.vue';
 import EnergyBar from '@/components/danmu/EnergyBar.vue';
 import LotteryAnimation from '@/components/danmu/LotteryAnimation.vue';
 import SettingsDialog from '@/components/danmu/SettingsDialog.vue';
-import { useDanmuState, startListening, stopListening, stopCollecting } from '@/danmu/store';
+import WinnerHistoryModal from '@/components/danmu/WinnerHistoryModal.vue';
+import { useDanmuState, startListening, stopListening, stopCollecting, clearLotteryHistory } from '@/danmu/store';
 import { stopAll } from '@/danmu/audio';
 
 const state = useDanmuState();
 const showSettings = ref(false);
+const showHistory = ref(false);
 
 function handleStop() {
   stopAll();
   stopCollecting();
+}
+
+function handleClearHistory() {
+  if (confirm('确定清空全部中奖记录吗？该操作无法撤销。')) {
+    clearLotteryHistory();
+  }
 }
 
 onMounted(() => {
@@ -67,6 +90,38 @@ onUnmounted(() => {
   flex-direction: column;
   overflow: hidden;
   user-select: none;
+}
+
+.history-zone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  padding: 12px;
+
+  .history-btn {
+    opacity: 0;
+    transition: opacity 0.3s;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+
+    &:hover {
+      background: rgba(255, 215, 0, 0.15);
+      border-color: rgba(255, 215, 0, 0.3);
+    }
+  }
+
+  &:hover .history-btn {
+    opacity: 1;
+  }
 }
 
 .settings-zone {

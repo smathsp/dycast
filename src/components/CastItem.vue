@@ -13,6 +13,7 @@
     <span class="time" v-if="time">{{ formatTime(time) }}</span>
     <span class="prefix">$</span>
     <p class="content">
+      <span v-if="user?.fansClub?.level" class="fans-level">{{ user.fansClub.level }}</span>
       <label class="nickname">[{{ user?.name ? user.name : 'unknown' }}]：</label>
       <template v-for="(item, index) in doms" :key="index">
         <span v-if="item.node === 'text'" class="text">{{ item.text }}</span>
@@ -251,6 +252,14 @@ $giftTotalColor: #e6a23c;
     font-family: 'mkwxy';
     color: $nameColor;
     flex-shrink: 0;
+  }
+  .fans-level {
+    color: #e6a23c;
+    font-size: 0.8rem;
+    font-weight: 600;
+    flex-shrink: 0;
+    margin-right: 3px;
+    font-family: 'mkwxy';
   }
   .text,
   .atuser,

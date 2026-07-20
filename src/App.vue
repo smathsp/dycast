@@ -16,7 +16,7 @@ const isDanmuMode = computed(() => {
 // 非弹幕模式才显示启动信息
 if (!isDanmuMode.value) {
   setTimeout(() => {
-    console?.clear();
+    console.clear();
     printSKMCJ();
     printInfo();
   }, 1500);

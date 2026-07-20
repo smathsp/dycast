@@ -1,4 +1,12 @@
-# Logs
+# 依赖
+node_modules
+
+# 构建产物
+dist
+dist-ssr
+release
+
+# 日志
 logs
 *.log
 npm-debug.log*
@@ -7,17 +15,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
+# 系统文件
 .DS_Store
-dist
-dist-ssr
-coverage
-*.local
+Thumbs.db
+desktop.ini
 
-/cypress/videos/
-/cypress/screenshots/
-
-# Editor directories and files
+# 编辑器
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -26,7 +29,27 @@ coverage
 *.njsproj
 *.sln
 *.sw?
+*.swp
+*.swo
 
+# TypeScript
 *.tsbuildinfo
 
+# 测试
+coverage
 test/
+cypress/videos/
+cypress/screenshots/
+
+# 本地配置
+*.local
+.env
+.env.*
+
+# Electron 打包缓存
+src-tauri/target
+
+# 临时文件
+tmp
+temp
+*.tmp
