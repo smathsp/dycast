@@ -89,12 +89,12 @@
         <!-- 左侧状态 -->
         <div class="meter-status">
           <span class="status-dot"></span>
-          <span>{{ isFull ? 'ULTIMATE READY' : 'ENERGY CHARGING' }}</span>
+          <span>{{ meterStatusText }}</span>
         </div>
 
         <!-- 满能量提示 -->
         <transition name="ready">
-          <div v-if="isFull" class="ultimate-ready">
+          <div v-if="isReady" class="ultimate-ready">
             <span>READY</span>
           </div>
         </transition>
@@ -122,11 +122,11 @@
       </span>
 
       <span class="footer-center">
-        {{ remaining > 0 ? `还差 ${remaining.toLocaleString()} 条触发抽奖` : '能量已充满' }}
+        {{ footerStatusText }}
       </span>
 
       <span>
-        累计弹幕
+        本场弹幕
         <strong>{{ state.totalPoolCount.toLocaleString() }}</strong>
       </span>
     </footer>
@@ -135,7 +135,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useDanmuState, settings } from '@/danmu/store';
+import { getLotteryStartBlockReason, useDanmuState, settings } from '@/danmu/store';
 
 const state = useDanmuState();
 
@@ -144,9 +144,30 @@ const percent = computed(() => {
   return Math.min((state.energy / settings.lotteryThreshold) * 100, 100);
 });
 
-const isFull = computed(() => state.isLotteryActive || (state.energy === 0 && state.totalDanmuCount > 0));
+const isFull = computed(() => state.isLotteryActive || state.energy >= settings.lotteryThreshold);
 
 const remaining = computed(() => Math.max(settings.lotteryThreshold - state.energy, 0));
+
+const blockReason = computed(() => isFull.value ? getLotteryStartBlockReason() : null);
+
+const isReady = computed(() => (
+  state.isLotteryActive
+  || (isFull.value && blockReason.value === null)
+));
+
+const meterStatusText = computed(() => {
+  if (state.isLotteryActive) return 'HAPPY DRAWING';
+  if (isReady.value) return 'ULTIMATE READY';
+  if (isFull.value) return 'ENERGY FULL';
+  return 'ENERGY CHARGING';
+});
+
+const footerStatusText = computed(() => {
+  if (remaining.value > 0) return `还差 ${remaining.value.toLocaleString()} 条触发 Happy`;
+  if (state.isLotteryActive) return '正在自动抽奖';
+  // 详细拦截原因只在“设置 → Happy 设置”中展示，直播画面保持简洁。
+  return '能量已充满';
+});
 
 const formattedCurrent = computed(() => state.energy.toLocaleString());
 const formattedMax = computed(() => settings.lotteryThreshold.toLocaleString());

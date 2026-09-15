@@ -1,49 +1,53 @@
 <template>
-  <Transition name="opin" :duration="500">
-    <div class="feed-dialog" v-show="visible">
-      <div className="feed-dialog-close" @click="hideFeedDialog">
-        <i className="ice-close-b icon"></i>
-      </div>
-      <div class="feed-dialog-main">
-        <div className="coin">
-          <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="128" height="128">
-            <path
-              d="M512 0c282.760533 0 512 229.239467 512 512 0 282.760533-229.239467 512-512 512-282.760533 0-512-229.239467-512-512C0 229.239467 229.239467 0 512 0z"
-              fill="#FCE815"></path>
-            <path
-              d="M951.569067 249.309867L65.024 761.890133a510.498133 510.498133 0 0 1-13.687467-26.2144L935.662933 224.392533c5.5296 8.192 10.8544 16.4864 15.906134 24.917334z m-33.314134-48.9472L39.1168 708.608c-11.6736-28.023467-20.821333-57.002667-27.306667-86.664533l845.0048-488.448c22.391467 20.411733 42.973867 42.8032 61.44 66.8672z"
-              fill="#FFDE92"></path>
-            <path
-              d="M512 34.133333C248.081067 34.133333 34.133333 248.081067 34.133333 512s213.947733 477.866667 477.866667 477.866667 477.866667-213.947733 477.866667-477.866667S775.918933 34.133333 512 34.133333z"
-              fill="#FCE815"></path>
-            <path
-              d="M906.001067 241.527467c5.597867 8.123733 10.9568 16.418133 16.042666 24.917333L94.549333 744.789333c-4.778667-8.6016-9.352533-17.339733-13.653333-26.248533L906.0352 241.527467zM825.685333 151.483733a480.733867 480.733867 0 0 1 62.805334 66.116267l-819.541334 473.770667a474.248533 474.248533 0 0 1-25.941333-87.381334L825.685333 151.483733z"
-              fill="#FFF9BC"></path>
-            <path
-              d="M512 136.533333C304.64 136.533333 136.533333 304.64 136.533333 512s168.106667 375.466667 375.466667 375.466667 375.466667-168.106667 375.466667-375.466667S719.36 136.533333 512 136.533333z"
-              fill="#FFC91A"></path>
-            <path
-              d="M730.385067 206.5408A375.022933 375.022933 0 0 1 887.466667 512c0 207.36-168.106667 375.466667-375.466667 375.466667-194.901333 0-355.157333-148.548267-373.691733-338.602667L730.385067 206.506667z"
-              fill="#FFB50D"></path>
-            <path
-              d="M409.6 307.2m65.8432 0l73.1136 0q65.8432 0 65.8432 65.8432l0 277.9136q0 65.8432-65.8432 65.8432l-73.1136 0q-65.8432 0-65.8432-65.8432l0-277.9136q0-65.8432 65.8432-65.8432Z"
-              fill="#FFF48A"></path>
-          </svg>
+  <Transition name="repo-fade" :duration="240">
+    <div v-show="visible" class="repo-dialog" @click.self="hideFeedDialog">
+      <section class="repo-panel" role="dialog" aria-modal="true" aria-labelledby="repo-title">
+        <button class="repo-close" type="button" aria-label="关闭" @click="hideFeedDialog">×</button>
+
+        <div class="repo-eyebrow">OPEN SOURCE</div>
+        <h2 id="repo-title">项目与仓库</h2>
+        <p class="repo-intro">本应用基于开源项目 DyCast 继续开发，感谢原作者提供核心弹幕连接能力。</p>
+
+        <div class="repo-list">
+          <a
+            class="repo-card original"
+            href="https://github.com/skmcj/dycast"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="repo-icon">源</span>
+            <span class="repo-copy">
+              <small>原作者仓库</small>
+              <strong>skmcj / dycast</strong>
+              <em>项目原始版本与核心实现</em>
+            </span>
+            <span class="repo-arrow">↗</span>
+          </a>
+
+          <a
+            class="repo-card maintained"
+            href="https://github.com/smathsp/dycast"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="repo-icon">新</span>
+            <span class="repo-copy">
+              <small>当前维护仓库</small>
+              <strong>smathsp / dycast</strong>
+              <em>Happy、灯牌、音频与界面增强版本</em>
+            </span>
+            <span class="repo-arrow">↗</span>
+          </a>
         </div>
-        <div className="qr-box">
-          <img className="qr" alt="QR" :src="qrCover" />
-        </div>
-        <div className="tip">
-          <span>微信扫码，可投喂UP ٩( 'ω' )و</span>
-        </div>
-      </div>
+
+        <footer>点击仓库卡片会使用系统浏览器打开 GitHub</footer>
+      </section>
     </div>
   </Transition>
 </template>
 
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import qrCover from '@/assets/images/feed.png';
 import { isBoolean } from '@/utils/typeUtil';
 
 interface FeedDialogProps {
@@ -55,131 +59,109 @@ const props = withDefaults(defineProps<FeedDialogProps>(), {
 });
 
 const visible = ref(false);
-
 const emits = defineEmits({ 'update:modelValue': (value: boolean) => isBoolean(value) });
 
-const hideFeedDialog = () => {
+function hideFeedDialog() {
   visible.value = false;
   emits('update:modelValue', false);
-};
+}
 
 watch(
   () => props.modelValue,
-  val => {
-    if (val) {
-      visible.value = true;
-    } else {
-      if (visible.value) visible.value = false;
-    }
-  }
+  value => { visible.value = value; }
 );
 </script>
 
 <style lang="scss" scoped>
-$bg: #f7f6f5;
+.repo-fade-enter-active,
+.repo-fade-leave-active { transition: opacity 0.24s ease; }
+.repo-fade-enter-from,
+.repo-fade-leave-to { opacity: 0; }
 
-.opin-enter-active,
-.opin-leave-active {
-  transition: opacity 0.5s ease-in-out;
-}
-
-.opin-enter-from,
-.opin-leave-to {
-  opacity: 0;
-}
-
-.feed-dialog {
-  z-index: 9999;
+.repo-dialog {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: $bg;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(3, 7, 20, 0.78);
+  backdrop-filter: blur(14px);
 }
 
-.feed-dialog-close {
-  position: absolute;
-  right: 3rem;
-  top: 3rem;
-  cursor: pointer;
-  color: #e94829;
-  will-change: transform;
-  transition: transform 0.2s ease-in-out;
-  transform: rotateZ(-180deg);
-  .icon {
-    font-size: 2rem;
-  }
-  &:active {
-    transform: rotateZ(0deg);
-    transition-duration: 0s;
-  }
-}
-
-.feed-dialog-main {
+.repo-panel {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  .qr-box {
-    width: 16rem;
-    height: 16rem;
-    border-radius: 5rem;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-    padding: 1rem;
-    background: #f7f6f5;
-    box-shadow:
-      9px 9px 12px #e1e0df,
-      -9px -9px 12px #ffffff;
-    .qr {
-      width: 100%;
-      height: 100%;
-      border-radius: 20%;
-      object-fit: cover;
-    }
-  }
-  .tip {
-    user-select: none;
-    margin-top: 24px;
-    font-size: 1.5rem;
-    font-family: 'dymht';
-    color: #9aa7b1;
-    text-shadow:
-      1px 1px 1px #333,
-      -1px -1px 1px #fff;
-  }
-  .coin {
-    position: absolute;
-    top: 0;
-    z-index: -1;
-    animation: putCoin 3s ease infinite;
-    svg {
-      width: 2rem;
-      height: 2rem;
-    }
-  }
+  width: min(620px, calc(100vw - 44px));
+  box-sizing: border-box;
+  padding: 38px;
+  color: #f5f8ff;
+  border: 1px solid rgba(102, 165, 255, 0.26);
+  border-radius: 24px;
+  background: linear-gradient(145deg, #121c3d, #0a1026 70%);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48), inset 0 1px rgba(255, 255, 255, 0.06);
 }
 
-@keyframes putCoin {
-  0% {
-    transform: translateY(0%);
-  }
-  24% {
-    transform: translateY(-200%) rotateY(360deg) scale(1.2);
-  }
-  50% {
-    transform: translateY(0%);
-  }
-  100% {
-    transform: translateY(0%);
-  }
+.repo-close {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  color: rgba(213, 224, 255, 0.68);
+  border: 1px solid rgba(130, 159, 225, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  font: 300 25px/1 Arial, sans-serif;
+}
+.repo-close:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
+
+.repo-eyebrow { color: #55d9ff; font-size: 11px; font-weight: 800; letter-spacing: 3px; }
+h2 { margin: 8px 0 8px; font-size: 30px; letter-spacing: 1px; }
+.repo-intro { max-width: 500px; margin: 0; color: rgba(197, 210, 242, 0.7); font-size: 14px; line-height: 1.7; }
+
+.repo-list { display: grid; gap: 12px; margin-top: 26px; }
+.repo-card {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid rgba(116, 147, 218, 0.2);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+  transition: 160ms ease;
+}
+.repo-card:hover { transform: translateY(-2px); border-color: rgba(87, 212, 255, 0.58); background: rgba(51, 133, 215, 0.11); }
+.repo-card.maintained { border-color: rgba(255, 192, 67, 0.3); }
+.repo-card.maintained:hover { border-color: rgba(255, 202, 77, 0.7); background: rgba(255, 181, 42, 0.08); }
+
+.repo-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: #071224;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #bdf4ff, #4dcfff);
+  font-size: 14px;
+  font-weight: 900;
+}
+.maintained .repo-icon { background: linear-gradient(135deg, #ffe39b, #ffbd3d); }
+.repo-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.repo-copy small { color: rgba(180, 199, 240, 0.58); font-size: 10px; letter-spacing: 1.2px; }
+.repo-copy strong { overflow: hidden; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
+.repo-copy em { color: rgba(196, 209, 239, 0.64); font-size: 12px; font-style: normal; }
+.repo-arrow { color: rgba(172, 202, 255, 0.58); font-size: 20px; }
+footer { margin-top: 20px; color: rgba(152, 171, 214, 0.46); font-size: 11px; text-align: center; }
+
+@media (max-width: 600px) {
+  .repo-dialog { padding: 14px; }
+  .repo-panel { width: 100%; padding: 30px 18px 22px; border-radius: 19px; }
+  h2 { font-size: 25px; }
+  .repo-card { grid-template-columns: 42px minmax(0, 1fr) 18px; gap: 10px; padding: 13px; }
+  .repo-copy em { display: none; }
 }
 </style>

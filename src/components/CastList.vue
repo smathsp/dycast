@@ -37,6 +37,7 @@
               :to-user="item.toUser"
               :gift="item.gift"
               :content="item.content"
+              :emoji-text="item.emojiText"
               :rtf-content="item.rtfContent"
               :time="item.time"
               :settings="settings" />
@@ -49,7 +50,7 @@
 
 <script setup lang="ts">
 import CastTypeBtn from '@/components/CastTypeBtn/index.vue';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
 import type { CastType } from './CastTypeBtn/type';
 import CastItem from './CastItem.vue';
 import { CastMethod, type DyMessage } from '@/core/dycast';
@@ -125,10 +126,14 @@ const setCastType = function (type: CastType, flag?: boolean) {
 };
 
 /** 显示弹幕 */
-const casts = ref<DyMessage[]>([]);
+const casts = shallowRef<DyMessage[]>([]);
 // 所有弹幕（用于类型切换时重新筛选）
 const MAX_DISPLAY_CASTS = 5000;
+// 虚拟滚动只保留最近的可见数据，避免长时间直播后渲染数组无限增长。
+const MAX_RENDERED_CASTS = 2000;
 const allCasts: DyMessage[] = [];
+const pendingCasts: DyMessage[] = [];
+let renderRafId: number | null = null;
 // 滚动锁定
 let scrollRafId: number | null = null;
 // 添加弹幕
@@ -141,6 +146,22 @@ const appendCasts = function (msgs: DyMessage[]) {
   }
   addCasts(msgs);
 };
+
+const flushPendingCasts = function () {
+  renderRafId = null;
+  if (!pendingCasts.length) return;
+  const incoming = pendingCasts.splice(0, pendingCasts.length);
+  const overflow = Math.max(0, casts.value.length + incoming.length - MAX_RENDERED_CASTS);
+  casts.value = overflow >= casts.value.length
+    ? incoming.slice(-MAX_RENDERED_CASTS)
+    : casts.value.slice(overflow).concat(incoming);
+  scheduleScrollToBottom();
+};
+
+const scheduleRender = function () {
+  if (renderRafId !== null) return;
+  renderRafId = requestAnimationFrame(flushPendingCasts);
+};
 /**
  * 设置弹幕显示
  */
@@ -150,20 +171,30 @@ const addCasts = function (msgs: DyMessage[], isClear: boolean = false) {
     else return false;
   });
   if (isClear) {
-    casts.value = list;
+    if (renderRafId !== null) {
+      cancelAnimationFrame(renderRafId);
+      renderRafId = null;
+    }
+    pendingCasts.length = 0;
+    casts.value = list.slice(-MAX_RENDERED_CASTS);
+    scheduleScrollToBottom();
   } else {
-    // 直接 push 后通过新引用触发响应式更新，避免每次创建新数组
-    casts.value.push(...list);
-    casts.value = casts.value.slice();
+    if (!list.length) return;
+    // 合并同一帧内的高频弹幕，最多每帧更新一次虚拟列表。
+    pendingCasts.push(...list);
+    scheduleRender();
   }
-  // 使用 requestAnimationFrame 合并滚动操作
-  scheduleScrollToBottom();
 };
 /**
  * 清空弹幕
  */
 const clearCasts = function () {
   allCasts.length = 0;
+  pendingCasts.length = 0;
+  if (renderRafId !== null) {
+    cancelAnimationFrame(renderRafId);
+    renderRafId = null;
+  }
   casts.value = [];
 };
 onMounted(() => {
@@ -204,6 +235,11 @@ const scheduleScrollToBottom = function () {
     scrollToBottom();
   });
 };
+
+onBeforeUnmount(() => {
+  if (renderRafId !== null) cancelAnimationFrame(renderRafId);
+  if (scrollRafId !== null) cancelAnimationFrame(scrollRafId);
+});
 
 defineExpose({
   appendCasts,

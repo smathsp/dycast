@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      # Renderer-only checks cannot catch an omitted main-process module. Build the
+      # real portable artifact on Windows so the packaging manifest is exercised.
+      - run: npm run electron:package
+      - name: Verify portable executable
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-ChildItem -LiteralPath build/release -Filter '*免安装版.exe' -File)
+          if ($artifacts.Count -ne 1) { throw "Expected exactly one portable EXE, found $($artifacts.Count)." }
+          if ($artifacts[0].Length -lt 50MB) { throw "Portable EXE is unexpectedly small." }

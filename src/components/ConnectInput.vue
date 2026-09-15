@@ -9,6 +9,7 @@
         v-model="inputValue"
         @blur="handleBlur"
         @focus="handleFocus"
+        @input="handleInput"
         @change="handleChange" />
       <div
         :class="{
@@ -93,6 +94,16 @@ const inputValue = defineModel<string>('value');
  * 按钮点击
  */
 const handleClick = () => {
+  if (!connectStatus.value && props.test) {
+    const valid = props.test(inputValue.value || '');
+    if (!valid.flag) {
+      btnDisabled.value = true;
+      testTip.value = valid.message;
+      return;
+    }
+    btnDisabled.value = false;
+    testTip.value = void 0;
+  }
   // 锁定输入
   inputDisabled.value = true;
   btnDisabled.value = true;
@@ -126,6 +137,9 @@ const handleBlur = (e: FocusEvent) => {
 const handleFocus = (e: FocusEvent) => {
   showHistory.value = true;
   emits('focus', e);
+};
+const handleInput = (event: Event) => {
+  handleTest((event.target as HTMLInputElement).value);
 };
 const handleChange = (e: Event) => {
   props.testTime === 'change' && handleTest(inputValue.value);
@@ -298,7 +312,6 @@ $testColor: $cancelColor;
     }
     &.disabled {
       opacity: 0.7;
-      pointer-events: none;
       cursor: not-allowed;
     }
     .cancel-text {

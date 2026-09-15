@@ -6,6 +6,10 @@ import vue from '@vitejs/plugin-vue';
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    outDir: 'build/renderer',
+    emptyOutDir: true
+  },
   plugins: [
     vue()
     // vueDevTools(),

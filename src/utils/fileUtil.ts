@@ -22,6 +22,7 @@ const mimeMap: Record<string, string> = {
   '.html': 'text/html',
   '.htm': 'text/html',
   '.csv': 'text/csv',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.xml': 'application/xml',
   '.js': 'application/javascript',
   '.ts': 'application/typescript',
@@ -224,7 +225,11 @@ class FileSaver {
 
   // 判断当前浏览器是否支持 File System Access API
   private static isFSAvailable(): boolean {
-    return 'showSaveFilePicker' in window && 'showOpenFilePicker' in window && 'FileSystemFileHandle' in window;
+    // Chromium does not expose FileSystemFileHandle as a property on window even when
+    // showSaveFilePicker is fully available. Requiring it here incorrectly forced every
+    // browser export down the legacy blob-download path.
+    return typeof window.showSaveFilePicker === 'function'
+      && typeof window.showOpenFilePicker === 'function';
   }
 
   // 确保文件名带有扩展名

@@ -12,14 +12,15 @@
         :like-count="likeCount" />
       <div class="view-left-highlight">
         <hr class="hr" />
+        <LiveOverlayQuickControls />
         <!-- 礼物置顶 -->
         <GiftHighlight ref="giftHighlightRef" />
       </div>
       <div class="view-left-bottom">
         <SidTool />
         <div class="view-left-tools">
-          <div class="view-left-tool feed-btn" title="投喂" @click.stop="openFeedDialog">
-            <i class="ice-coin icon"></i>
+          <div class="view-left-tool feed-btn" title="项目仓库" @click.stop="openFeedDialog">
+            <span class="repo-tool-icon">&lt;/&gt;</span>
           </div>
           <div class="view-left-tool cm-btn" title="保存弹幕" @click.stop="saveCastToFile">
             <i class="ice-save icon"></i>
@@ -29,6 +30,16 @@
           </div>
           <div class="view-left-tool cm-btn" title="弹幕充能" @click.stop="openDanmuPage">
             <span class="danmu-icon">⚡</span>
+          </div>
+          <div
+            class="view-left-tool cm-btn live-overlay-btn"
+            :class="{ active: liveOverlayOpen }"
+            :title="liveOverlayOpen ? '关闭直播信息绿幕' : '打开直播信息绿幕'"
+            @click.stop="toggleLiveOverlayWindow">
+            <span class="live-overlay-icon">⏱</span>
+          </div>
+          <div class="view-left-tool cm-btn display-page-btn" title="观众弹幕展示" @click.stop="openDanmuDisplayPage">
+            <span class="display-page-icon">💬</span>
           </div>
         </div>
         <hr class="hr" />
@@ -44,7 +55,7 @@
         <ConnectInput
           ref="roomInput"
           label="房间号"
-          placeholder="请输入房间号"
+          placeholder="输入房间号或直播链接"
           v-model:value="roomNum"
           :test="verifyRoomNumber"
           :history-list="roomHistory"
@@ -84,6 +95,7 @@ import SidTool from '@/components/SidTool/SidTool.vue';
 import FeedDialog from '@/components/FeedDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import GiftHighlight from '@/components/GiftHighlight.vue';
+import LiveOverlayQuickControls from '@/components/LiveOverlayQuickControls.vue';
 import {
   CastMethod,
   DyCast,
@@ -94,12 +106,12 @@ import {
   type DyMessage,
   type LiveRoom
 } from '@/core/dycast';
-import { verifyRoomNum, verifyWsUrl } from '@/utils/verifyUtil';
-import { markRaw, onMounted, ref, useTemplateRef } from 'vue';
+import { extractRoomNum, verifyRoomNum, verifyWsUrl } from '@/utils/verifyUtil';
+import { markRaw, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue';
 import { getHistory, addHistory, removeHistory, type HistoryItem } from '@/utils/historyUtil';
 import { CLog } from '@/utils/logUtil';
 import { getId } from '@/utils/idUtil';
-import { pushDanmu } from '@/danmu/store';
+import { beginLiveSession, pushDanmu } from '@/danmu/store';
 import type { Danmu } from '@/danmu/types';
 import { RelayCast } from '@/core/relay';
 import SkMessage from '@/components/Message';
@@ -126,6 +138,8 @@ const statusPanelRef = useTemplateRef('panel');
 const fdVisible = ref(false);
 // 设置弹窗可见性
 const settingsVisible = ref(false);
+const liveOverlayOpen = ref(false);
+let stopLiveOverlayStateListener: (() => void) | null = null;
 
 /** 直播间信息 */
 const cover = ref<string>('');
@@ -149,6 +163,8 @@ const allCasts: DyMessage[] = [];
 // 去重集合（滑动窗口）
 const MAX_SET_SIZE = 5000;
 const castSet = new Set<string>();
+let liveSessionId = '';
+let liveSessionDanmuCount = 0;
 // 弹幕客户端
 let castWs: DyCast | undefined;
 // 转发客户端
@@ -231,19 +247,31 @@ const handleMessages = function (msgs: DyMessage[]) {
       markRaw(msg);
       // 同步到弹幕抽奖 store（聊天和表情弹幕）
       if (msg.method === CastMethod.CHAT || msg.method === CastMethod.EMOJI_CHAT) {
+        const numericUserId = msg.user?.douyinIdSource === 'displayId' && /^\d+$/.test(msg.user.douyinId || '')
+          ? msg.user.douyinId
+          : undefined;
         const danmu = {
           id: msg.id!,
+          liveSessionId,
+          liveSessionCount: ++liveSessionDanmuCount,
+          userId: numericUserId,
+          userIdVerified: Boolean(numericUserId),
+          userIdSource: numericUserId ? 'displayId' as const : undefined,
+          secUid: msg.user?.id,
           avatar: msg.user?.avatar || '',
           nickname: msg.user?.name || '匿名',
-          content: msg.content || '',
+          content: msg.method === CastMethod.EMOJI_CHAT
+            ? (msg.emojiText || '会员表情')
+            : (msg.content || ''),
+          emojiUrl: msg.method === CastMethod.EMOJI_CHAT ? msg.content : undefined,
           timestamp: msg.time || Date.now(),
-          fansClub: msg.user?.fansClub
+          fansClub: msg.user?.fansClub,
+          targetAnchorId: msg.user?.currentTargetAnchorId
         };
         pushDanmu(danmu);
-        // Electron 环境下通过 IPC 转发给弹幕窗口
-        if (window.electronAPI?.sendDanmu) {
-          window.electronAPI.sendDanmu(danmu);
-        }
+        // pushDanmu 会补全该用户当前主播的灯牌缓存，
+        // 同步回主页消息，确保显示与抽奖判断使用同一份最新数据。
+        if (msg.user && danmu.fansClub) msg.user.fansClub = danmu.fansClub;
       }
       switch (msg.method) {
         case CastMethod.CHAT:
@@ -359,30 +387,69 @@ const LAST_ROOM_KEY = 'dycast_last_room';
 
 const connectLive = function () {
   try {
+    const normalizedRoomNum = extractRoomNum(roomNum.value);
+    if (!normalizedRoomNum) {
+      SkMessage.error('请输入正确的房间号或抖音直播链接');
+      setRoomInputStatus(false);
+      return;
+    }
+    // 新连接必须先静默淘汰旧实例；否则旧实例的重连计时器仍会继续投递消息、
+    // 重复充能，并与新实例争抢界面状态。
+    castWs?.dispose();
+    castWs = void 0;
+    if (relayWs) {
+      relayWs.dispose();
+      relayWs = void 0;
+      relayStatus.value = 0;
+      setRelayInputStatus(false);
+    }
+    roomNum.value = normalizedRoomNum;
+    const connectingRoomNum = normalizedRoomNum;
+    connectStatus.value = 4;
+    // 解析房间和建立连接期间也允许用户立即取消。
+    setRoomInputStatus(true);
     // 清空上一次连接的消息
     clearMessageList();
+    liveSessionId = typeof crypto?.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `live-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    liveSessionDanmuCount = 0;
+    beginLiveSession(liveSessionId);
     CLog.debug('正在连接:', roomNum.value);
     SkMessage.info(`正在连接：${roomNum.value}`);
     // 保存房间号用于刷新后自动重连
     localStorage.setItem(LAST_ROOM_KEY, roomNum.value);
-    const cast = new DyCast(roomNum.value);
+    const cast = new DyCast(connectingRoomNum);
+    castWs = cast;
     cast.on('open', (ev, info) => {
+      if (castWs !== cast) return;
       CLog.info('DyCast 房间连接成功');
-      SkMessage.success(`房间连接成功[${roomNum.value}]`);
+      SkMessage.success(`房间连接成功[${connectingRoomNum}]`);
       setRoomInputStatus(true);
       connectStatus.value = 1;
       setRoomInfo(info);
       addConsoleMessage('直播间已连接');
       // 保存到历史记录（包含主播信息）
-      roomHistory.value = addHistory(roomNum.value, info?.nickname, info?.avatar);
+      roomHistory.value = addHistory(connectingRoomNum, info?.nickname, info?.avatar);
     });
     cast.on('error', err => {
+      if (castWs !== cast) return;
       CLog.error('DyCast 连接出错 =>', err);
-      SkMessage.error(`连接出错: ${err}`);
-      connectStatus.value = 2;
-      setRoomInputStatus(false);
+      const message = describeLiveConnectionError(err);
+      if (isPermanentRoomConnectionError(err)) {
+        SkMessage.error(`房间号/链接无效或访问被拒绝，检查后重试：${message}`);
+        connectStatus.value = 2;
+        setRoomInputStatus(false);
+        return;
+      }
+      SkMessage.warning(`连接出现波动，正在恢复：${message}`);
+      addConsoleMessage(`连接波动：${message}`);
+      connectStatus.value = 4;
+      setRoomInputStatus(true);
     });
     cast.on('close', (code, reason) => {
+      if (castWs !== cast) return;
+      castWs = void 0;
       CLog.info(`DyCast 房间已关闭[${code}] => ${reason}`);
       connectStatus.value = 3;
       setRoomInputStatus(false);
@@ -401,10 +468,15 @@ const connectLive = function () {
         case DyCastCloseCode.CANNOT_RECEIVE:
           SkMessage.error('无法正常接收信息，已关闭');
           break;
+        case DyCastCloseCode.CONNECTING_ERROR:
+          if (!isPermanentRoomConnectionError(reason)) SkMessage.info('房间已关闭');
+          break;
         default:
           SkMessage.info('房间已关闭');
       }
-      if (code === DyCastCloseCode.LIVE_END) {
+      if (isPermanentRoomConnectionError(reason)) {
+        addConsoleMessage(`连接失败：${reason}`);
+      } else if (code === DyCastCloseCode.LIVE_END) {
         addConsoleMessage(reason || '主播尚未开播或已下播');
       } else {
         if (statusPanelRef.value) addConsoleMessage(`连接已关闭，共持续: ${statusPanelRef.value.getDuration()}`);
@@ -412,9 +484,13 @@ const connectLive = function () {
       }
     });
     cast.on('message', msgs => {
+      if (castWs !== cast) return;
       handleMessages(msgs);
     });
     cast.on('reconnecting', (count, code, reason) => {
+      if (castWs !== cast) return;
+      connectStatus.value = 4;
+      setRoomInputStatus(true);
       switch (code) {
         case DyCastCloseCode.CANNOT_RECEIVE:
           // 无法正常接收信息
@@ -426,21 +502,27 @@ const connectLive = function () {
       }
     });
     cast.on('reconnect', ev => {
+      if (castWs !== cast) return;
       CLog.info('DyCast 重连成功');
       SkMessage.success('房间重连完成');
+      connectStatus.value = 1;
     });
-    cast.connect();
-    castWs = cast;
+    void cast.connect();
   } catch (err) {
     CLog.error('房间连接过程出错:', err);
     SkMessage.error('房间连接过程出错');
     setRoomInputStatus(false);
+    castWs?.dispose();
     castWs = void 0;
   }
 };
 /** 断开连接 */
 const disconnectLive = function () {
-  if (castWs) castWs.close(1000, '断开连接');
+  if (castWs) castWs.close(DyCastCloseCode.NORMAL, '断开连接');
+  else {
+    connectStatus.value = 3;
+    setRoomInputStatus(false);
+  }
   // 主房间断开时，联动停止转发
   if (relayWs) {
     relayWs.close(1000, '主房间已断开');
@@ -451,10 +533,16 @@ const disconnectLive = function () {
 /** 连接转发房间 */
 const relayCast = function () {
   try {
+    relayWs?.dispose();
+    relayWs = void 0;
+    relayStatus.value = 4;
+    setRelayInputStatus(true);
     CLog.info('正在连接转发中 =>', relayUrl.value);
     SkMessage.info(`转发连接中: ${relayUrl.value}`);
     const cast = new RelayCast(relayUrl.value);
+    relayWs = cast;
     cast.on('open', () => {
+      if (relayWs !== cast) return;
       CLog.info(`DyCast 转发连接成功`);
       SkMessage.success(`已开始转发`);
       setRelayInputStatus(true);
@@ -466,6 +554,8 @@ const relayCast = function () {
       }
     });
     cast.on('close', (code, msg) => {
+      if (relayWs !== cast) return;
+      relayWs = void 0;
       CLog.info(`(${code})dycast 转发已关闭: ${msg || '未知原因'}`);
       if (code === 1000) SkMessage.info(`已停止转发`);
       else SkMessage.warning(`转发已停止: ${msg || '未知原因'}`);
@@ -474,17 +564,20 @@ const relayCast = function () {
       addConsoleMessage('转发已关闭');
     });
     cast.on('error', ev => {
+      if (relayWs !== cast) return;
       CLog.warn(`dycast 转发出错: ${ev.message}`);
-      SkMessage.error(`转发出错了: ${ev.message}`);
-      setRelayInputStatus(false);
-      relayStatus.value = 2;
+      SkMessage.warning(`转发连接波动，正在恢复: ${ev.message}`);
+      setRelayInputStatus(true);
+      relayStatus.value = 4;
     });
     cast.on('reconnecting', count => {
+      if (relayWs !== cast) return;
       CLog.warn(`RelayCast 重连中 => 第${count}次`);
       SkMessage.warning(`转发重连中: ${count}`);
-      relayStatus.value = 1;
+      relayStatus.value = 4;
     });
     cast.on('reconnect', () => {
+      if (relayWs !== cast) return;
       CLog.info('RelayCast 重连成功');
       SkMessage.success('转发重连完成');
       setRelayInputStatus(true);
@@ -495,7 +588,6 @@ const relayCast = function () {
       }
     });
     cast.connect();
-    relayWs = cast;
   } catch (err) {
     CLog.error('弹幕转发出错:', err);
     SkMessage.error(`转发出错: ${(err as Error).message}`);
@@ -506,7 +598,11 @@ const relayCast = function () {
 };
 /** 暂停转发 */
 const stopRelayCast = function () {
-  if (relayWs) relayWs.close(1000);
+  if (relayWs) relayWs.close(1000, '用户停止转发');
+  else {
+    relayStatus.value = 0;
+    setRelayInputStatus(false);
+  }
 };
 
 /** 将弹幕保存到本地文件 */
@@ -555,7 +651,48 @@ const openFeedDialog = function () {
  * 打开弹幕充能页面
  */
 const openDanmuPage = function () {
+  if (window.electronAPI?.openDanmuPage) {
+    window.electronAPI.openDanmuPage();
+    return;
+  }
   window.open(`${location.pathname}?danmu`, '_blank');
+};
+
+/** 打开或关闭给直播软件采集的绿幕信息窗口。 */
+const toggleLiveOverlayWindow = async function () {
+  if (window.electronAPI?.toggleLiveOverlayWindow) {
+    liveOverlayOpen.value = await window.electronAPI.toggleLiveOverlayWindow();
+    return;
+  }
+  window.open(`${location.pathname}?live-info`, '_blank');
+  liveOverlayOpen.value = true;
+};
+
+function describeLiveConnectionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || '未知错误');
+  if (/get live info|fetch live info|failed to fetch|networkerror/i.test(message)) {
+    return '无法读取直播间信息，请检查房间地址、网络或系统代理后重试';
+  }
+  if (/fetch webcast user/i.test(message)) {
+    return '抖音连接初始化失败，请稍后重试';
+  }
+  if (/^(error|unknown error)$/i.test(message.trim())) {
+    return '弹幕 WebSocket 连接失败，请检查网络或系统代理';
+  }
+  return message;
+}
+
+function isPermanentRoomConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const status = Number(message.match(/HTTP\s+(4\d\d)/i)?.[1]);
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
+/**
+ * 打开给主播和观众共同观看的弹幕互动页面
+ */
+const openDanmuDisplayPage = function () {
+  window.open(`${location.pathname}?display`, '_blank');
 };
 
 /**
@@ -575,11 +712,26 @@ const handleDeleteHistory = function (value: string) {
 
 // 刷新后自动重连上次的房间
 onMounted(() => {
+  if (window.electronAPI?.getLiveOverlayWindowOpen) {
+    void window.electronAPI.getLiveOverlayWindowOpen().then(open => { liveOverlayOpen.value = open; });
+    stopLiveOverlayStateListener = window.electronAPI.onLiveOverlayWindowState?.(open => {
+      liveOverlayOpen.value = open;
+    }) || null;
+  }
   const lastRoom = localStorage.getItem(LAST_ROOM_KEY);
   if (lastRoom) {
     roomNum.value = lastRoom;
     connectLive();
   }
+});
+
+onBeforeUnmount(() => {
+  castWs?.dispose();
+  castWs = void 0;
+  relayWs?.dispose();
+  relayWs = void 0;
+  stopLiveOverlayStateListener?.();
+  stopLiveOverlayStateListener = null;
 });
 </script>
 
@@ -685,6 +837,23 @@ $gold: #e6b422;
     .danmu-icon {
       font-size: 0.9em;
       line-height: 1;
+    }
+    .display-page-icon {
+      font-size: 0.76em;
+      line-height: 1;
+      filter: saturate(0.8);
+    }
+    .live-overlay-icon {
+      font-size: 0.72em;
+      line-height: 1;
+    }
+    .repo-tool-icon {
+      font: 800 0.52em/1 Consolas, monospace;
+      letter-spacing: -1px;
+    }
+    &.live-overlay-btn.active {
+      color: #fff;
+      background-color: $theme;
     }
   }
   .view-center {

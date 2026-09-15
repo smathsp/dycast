@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 190" fill="none">
+  <defs>
+    <linearGradient id="violet" x1="40" y1="20" x2="210" y2="168" gradientUnits="userSpaceOnUse"><stop stop-color="#8ff7ff"/><stop offset=".28" stop-color="#c6a4ff"/><stop offset=".62" stop-color="#8d42ff"/><stop offset="1" stop-color="#44149c"/></linearGradient>
+    <linearGradient id="crystal" x1="110" y1="23" x2="133" y2="154"><stop stop-color="#fff"/><stop offset=".25" stop-color="#a9ecff"/><stop offset=".55" stop-color="#ae69ff"/><stop offset="1" stop-color="#401177"/></linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <g filter="url(#glow)" stroke="#c6f7ff" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M27 132 67 55l24 70Z" fill="url(#violet)" opacity=".72"/>
+    <path d="m62 139 32-99 31 104Z" fill="url(#violet)"/>
+    <path d="m101 145 28-128 31 128Z" fill="url(#crystal)"/>
+    <path d="m143 143 29-104 30 91Z" fill="url(#violet)"/>
+    <path d="m180 130 23-69 25 72Z" fill="url(#violet)" opacity=".72"/>
+    <path d="M44 146c48-23 111-23 166 0-51 23-111 23-166 0Z" fill="#6f27d4" opacity=".48"/>
+    <path d="m128 53 6 19 19 6-19 6-6 19-6-19-19-6 19-6 6-19Z" fill="#fff" stroke="none"/>
+  </g>
+  <g fill="#d9fbff"><circle cx="38" cy="74" r="3"/><circle cx="214" cy="40" r="4"/><circle cx="220" cy="152" r="2.5"/></g>
+</svg>

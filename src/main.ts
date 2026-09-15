@@ -1,4 +1,5 @@
 import './assets/main.css';
+import 'lxgw-wenkai-webfont/lxgwwenkai-bold.css';
 
 import { createApp } from 'vue';
 import App from './App.vue';

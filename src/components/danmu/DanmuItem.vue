@@ -5,13 +5,14 @@
     @animationend="$emit('end', danmu.id)">
     <img v-if="danmu.avatar" class="danmu-avatar" :src="danmu.avatar" alt="" />
     <span class="danmu-nickname">{{ danmu.nickname || '匿名' }}：</span>
-    <span class="danmu-content">{{ danmu.content }}</span>
+    <span class="danmu-content"><InlineEmojiText :content="danmu.content" :emoji-url="danmu.emojiUrl" /></span>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Danmu } from '@/danmu/types';
+import InlineEmojiText from '@/components/InlineEmojiText.vue';
 
 const props = defineProps<{
   danmu: Danmu;

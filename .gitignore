@@ -2,9 +2,10 @@
 node_modules
 
 # 构建产物
-dist
-dist-ssr
-release
+build/
+dist/
+dist-ssr/
+release*/
 
 # 日志
 logs
@@ -37,11 +38,13 @@ desktop.ini
 
 # 测试
 coverage
+test-artifacts/
 test/
 cypress/videos/
 cypress/screenshots/
 
 # 本地配置
+.codex/
 *.local
 .env
 .env.*

@@ -13,14 +13,22 @@
     <span class="time" v-if="time">{{ formatTime(time) }}</span>
     <span class="prefix">$</span>
     <p class="content">
-      <span v-if="user?.fansClub?.level" class="fans-level">{{ user.fansClub.level }}</span>
+      <span
+        v-for="club in targetFansClubs"
+        :key="club.uid"
+        class="fans-badge"
+        :class="`fans-badge-${club.index + 1}`"
+        :title="`${club.name}灯牌 ${club.level} 级`"
+      >
+        <strong>{{ club.level }}</strong>
+      </span>
       <label class="nickname">[{{ user?.name ? user.name : 'unknown' }}]：</label>
       <template v-for="(item, index) in doms" :key="index">
         <span v-if="item.node === 'text'" class="text">{{ item.text }}</span>
         <span v-else-if="item.node === 'user'" class="atuser">{{ item.text }}</span>
         <span v-else-if="item.node === 'touser'" class="touser">{{ item.text }}</span>
         <img v-else-if="item.node === 'icon'" class="icon" :title="item.text" :src="item.url" :alt="item.text" />
-        <img v-else-if="item.node === 'emoji'" class="emoji" alt="会员表情" :src="item.url" />
+        <img v-else-if="item.node === 'emoji'" class="emoji" :alt="item.text || '会员表情'" :title="item.text" :src="item.url" />
       </template>
     </p>
     <span class="gift-info" v-if="method === CastMethod.GIFT && gift">
@@ -60,6 +68,7 @@ interface CastItemProps {
   toUser?: CastUser;
   gift?: CastGift;
   content?: string;
+  emojiText?: string;
   rtfContent?: CastRtfContent[];
   time?: number;
   settings?: Settings;
@@ -73,6 +82,19 @@ const giftTotal = computed(() => {
   return props.gift.price * Number(props.gift.count);
 });
 
+/** 主页只展示当前直播间主播的灯牌。 */
+const targetFansClubs = computed(() => {
+  const currentAnchorId = props.user?.currentTargetAnchorId;
+  return (props.user?.fansClub || [])
+    .filter(club => club.level && currentAnchorId && club.anchorId === currentAnchorId)
+    .map((club, index) => ({
+      uid: club.anchorId || `current-${index}`,
+      name: club.clubName || '当前',
+      level: club.level!,
+      index
+    }));
+});
+
 /**
  * 创建普通内容
  * @param content
@@ -82,17 +104,10 @@ const createTextContent = function (content?: string): CastContentDOM[] {
   if (!content) return [];
   const list: CastContentDOM[] = [];
   const cns = content.split(/(\[.*?])/);
-  for (let i = 0; i < cns.length; i++) {
-    const item = cns[i];
+  for (const item of cns) {
     if (!item) continue;
-    if (emojis[item]) {
-      list.push({ node: 'icon', text: item, url: emojis[item] });
-    } else {
-      list.push({
-        node: 'text',
-        text: item
-      });
-    }
+    if (emojis[item]) list.push({ node: 'icon', text: item, url: emojis[item] });
+    else list.push({ node: 'text', text: item });
   }
   return list;
 };
@@ -188,7 +203,7 @@ const doms = computed(() => {
       list = [
         {
           node: 'emoji',
-          text: '会员表情',
+          text: props.emojiText || '会员表情',
           url: props.content
         }
       ];
@@ -253,18 +268,34 @@ $giftTotalColor: #e6a23c;
     color: $nameColor;
     flex-shrink: 0;
   }
-  .fans-level {
-    color: #e6a23c;
-    font-size: 0.8rem;
-    font-weight: 600;
+  .fans-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
+    color: #a95f00;
+    vertical-align: 1px;
     flex-shrink: 0;
-    margin-right: 3px;
-    font-family: 'mkwxy';
+    white-space: nowrap;
+
+    strong {
+      color: #e07800;
+      font: 400 1.22rem/1 'PangMenZhengDaoCuShuTi', 'Arial Black', sans-serif;
+      text-shadow: 0 0 5px rgba(255, 180, 55, 0.42);
+    }
+  }
+  .fans-badge-2 {
+    color: #3569a8;
+
+    strong { color: #287cc9; }
   }
   .text,
   .atuser,
   .touser {
     color: $textColor;
+    font-family: 'LXGW WenKai', 'Microsoft YaHei UI', sans-serif;
+    font-weight: 700;
+    line-height: 1.5;
     // line-height: 1rem;
     word-break: break-all;
     white-space: normal;
@@ -343,6 +374,16 @@ $giftTotalColor: #e6a23c;
     }
     .nickname {
       color: $nameDarkColor;
+    }
+    .fans-badge {
+      color: #ffd58b;
+
+      strong { color: #ffba42; }
+    }
+    .fans-badge-2 {
+      color: #a9d5ff;
+
+      strong { color: #62b4ff; }
     }
     .text {
       color: $textDarkColor;

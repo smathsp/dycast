@@ -62,15 +62,57 @@
       <div class="counter-panel">
         <div class="counter-decoration left"></div>
         <div class="counter-content">
-          <span class="counter-label">累计收集弹幕</span>
+          <span class="counter-label">本场直播弹幕</span>
           <div class="counter-value">{{ formattedTotal }}</div>
           <span class="counter-unit">DANMAKU COLLECTED</span>
         </div>
         <div class="counter-decoration right"></div>
       </div>
 
-      <!-- 开始按钮 -->
-      <button class="start-button" type="button" :disabled="starting" @click="handleStart">
+      <!-- 展示与抽奖分别开启：展示不会进入奖池。 -->
+      <div class="start-control-row">
+      <div class="winner-count-control" aria-label="本轮 Happy 人数">
+        <div class="winner-count-heading">
+          <span class="winner-count-label">本轮抽取</span>
+          <label class="winner-count-input-wrap">
+            <input
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="off"
+              aria-label="手动输入本轮 Happy 人数"
+              v-model="winnerCountInput"
+              @input.stop="handleWinnerCountInput"
+              @focus="handleWinnerCountFocus"
+              @click.stop="handleWinnerCountFocus"
+              @mouseup.prevent
+              @keydown.stop
+              @blur="commitWinnerCount"
+              @keydown.enter="($event.currentTarget as HTMLInputElement).blur()" />
+            <span>人</span>
+          </label>
+        </div>
+        <div class="winner-count-options" role="group" aria-label="选择本轮 Happy 人数">
+          <button
+            v-for="count in winnerCountOptions"
+            :key="count"
+            type="button"
+            :disabled="starting"
+            :class="{ active: settings.lotteryWinnerCount === count }"
+            @click="setWinnerCount(count)">
+            <strong>{{ count }}</strong><small>人</small>
+          </button>
+        </div>
+        <small class="winner-count-hint">支持 1–24 人 · 主播逐位揭晓 Happy</small>
+      </div>
+      <button class="display-button" type="button" :disabled="starting" @click="handleStartDisplaying">
+        <span class="display-icon">💬</span>
+        <span>
+          <strong>开始展示弹幕</strong>
+          <small>DISPLAY ONLY · 不参与抽奖</small>
+        </span>
+      </button>
+      <button class="start-button" type="button" :disabled="starting" @click="handleStartCollecting">
         <span class="button-border"></span>
         <span class="button-glow"></span>
         <span class="button-scan"></span>
@@ -87,6 +129,7 @@
           <i></i><i></i><i></i>
         </span>
       </button>
+      </div>
 
       <!-- 底部信息 -->
       <div class="footer-status">
@@ -112,12 +155,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { useDanmuState, startCollecting } from '@/danmu/store';
+import { computed, ref, watch } from 'vue';
+import { useDanmuState, startCollecting, startDisplaying, settings, updateSettings } from '@/danmu/store';
 import { playCharging } from '@/danmu/audio';
 
 const state = useDanmuState();
 const starting = ref(false);
+const winnerCountOptions = [1, 10, 24] as const;
+const winnerCountInput = ref(String(settings.lotteryWinnerCount));
 
 const formattedTotal = computed(() => state.totalPoolCount.toLocaleString('zh-CN'));
 
@@ -133,11 +178,48 @@ const particles = Array.from({ length: 28 }, (_, i) => ({
   }
 }));
 
-async function handleStart() {
+function setWinnerCount(count: number) {
+  if (starting.value) return;
+  const normalized = Math.min(24, Math.max(1, Math.round(count)));
+  winnerCountInput.value = String(normalized);
+  updateSettings({ lotteryWinnerCount: normalized });
+}
+
+function handleWinnerCountInput() {
+  winnerCountInput.value = winnerCountInput.value.replace(/\D/g, '').slice(0, 3);
+  if (!winnerCountInput.value) return;
+  const value = Number(winnerCountInput.value);
+  if (value >= 1 && value <= 24) {
+    updateSettings({ lotteryWinnerCount: value });
+  }
+}
+
+function handleWinnerCountFocus(event: FocusEvent | MouseEvent) {
+  (event.currentTarget as HTMLInputElement).select();
+}
+
+function commitWinnerCount() {
+  if (!winnerCountInput.value) {
+    winnerCountInput.value = String(settings.lotteryWinnerCount);
+    return;
+  }
+  setWinnerCount(Number(winnerCountInput.value));
+}
+
+watch(() => settings.lotteryWinnerCount, value => {
+  winnerCountInput.value = String(value);
+});
+
+function handleStartDisplaying() {
+  if (starting.value) return;
+  startDisplaying();
+}
+
+async function handleStartCollecting() {
   if (starting.value) return;
   starting.value = true;
   playCharging();
-  await new Promise(r => setTimeout(r, 900));
+  // 点击即建立本轮奖池边界，避免启动动画期间的弹幕被漏掉。
   startCollecting();
   starting.value = false;
 }
@@ -383,9 +465,126 @@ async function handleStart() {
 }
 
 /* 开始按钮 */
+.start-control-row {
+  width: min(920px, 94vw);
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 14px;
+}
+
+.winner-count-control {
+  min-height: 96px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px 13px;
+  border: 1px solid rgba(71, 204, 255, 0.35);
+  border-radius: 15px;
+  background: linear-gradient(145deg, rgba(19, 54, 117, 0.84), rgba(42, 34, 111, 0.82));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05), 0 0 24px rgba(43, 139, 255, 0.12);
+}
+
+.winner-count-label {
+  color: rgba(194, 220, 255, 0.72);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.winner-count-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.winner-count-input-wrap {
+  height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  color: rgba(194, 220, 255, 0.68);
+  border: 1px solid rgba(93, 199, 255, 0.38);
+  border-radius: 7px;
+  background: rgba(5, 17, 52, 0.5);
+  font-size: 9px;
+}
+
+.winner-count-input-wrap input {
+  width: 38px;
+  padding: 0;
+  color: #fff;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: 800 15px/1 Arial, "Microsoft YaHei", sans-serif;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  user-select: text;
+  -webkit-app-region: no-drag;
+}
+
+.winner-count-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.winner-count-options button {
+  height: 31px;
+  padding: 0;
+  cursor: pointer;
+  color: rgba(196, 216, 255, 0.65);
+  border: 1px solid rgba(101, 157, 238, 0.3);
+  border-radius: 7px;
+  background: rgba(8, 18, 55, 0.45);
+  transition: 160ms ease;
+}
+
+.winner-count-options button strong { font-size: 14px; font-weight: 850; }
+.winner-count-options button small { margin-left: 1px; font-size: 8px; }
+.winner-count-options button:hover,
+.winner-count-options button.active {
+  color: #08152d;
+  border-color: var(--cyan);
+  background: linear-gradient(135deg, #dffbff, var(--cyan));
+  box-shadow: 0 0 12px rgba(53, 230, 255, 0.3);
+}
+.winner-count-options button:disabled { cursor: wait; opacity: 0.68; }
+.winner-count-hint { margin-top: 6px; color: rgba(137, 177, 232, 0.48); font-size: 9px; }
+
+.display-button {
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+  cursor: pointer;
+  color: #e6fbff;
+  border: 1px solid rgba(74, 224, 255, 0.5);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(29, 126, 177, 0.72), rgba(45, 59, 143, 0.82));
+  box-shadow: 0 0 22px rgba(47, 194, 255, 0.18), inset 0 1px rgba(255, 255, 255, 0.14);
+  transition: transform 180ms ease, filter 180ms ease, box-shadow 180ms ease;
+}
+.display-button:hover:not(:disabled) {
+  transform: translateY(-4px);
+  filter: brightness(1.15);
+  box-shadow: 0 0 28px rgba(53, 230, 255, 0.4), inset 0 1px rgba(255, 255, 255, 0.2);
+}
+.display-button:disabled { cursor: wait; opacity: 0.72; }
+.display-button strong { display: block; font-size: 20px; font-weight: 900; letter-spacing: 1px; }
+.display-button small { display: block; margin-top: 7px; color: rgba(193, 239, 255, 0.62); font-size: 8px; font-weight: 800; letter-spacing: 1.5px; }
+.display-icon { font-size: 34px; filter: drop-shadow(0 0 9px rgba(98, 230, 255, 0.7)); }
+
 .start-button {
   position: relative; display: grid; grid-template-columns: 48px 1fr 44px;
-  align-items: center; gap: 14px; width: min(440px, 90vw); min-height: 96px;
+  align-items: center; gap: 14px; width: 100%; min-height: 96px;
   padding: 14px 24px; overflow: hidden; cursor: pointer; color: #fff; border: 0;
   clip-path: polygon(22px 0, calc(100% - 22px) 0, 100% 50%, calc(100% - 22px) 100%, 22px 100%, 0 50%);
   background: linear-gradient(110deg, rgba(16, 54, 118, 0.98), rgba(29, 96, 185, 0.96) 50%, rgba(55, 52, 157, 0.98));
@@ -538,7 +737,10 @@ async function handleStart() {
   .title-block h1 { font-size: 39px; letter-spacing: 5px; }
   .title-block p { font-size: 12px; }
   .counter-decoration, .side-decoration { display: none; }
-  .start-button { width: min(390px, 94vw); min-height: 86px; grid-template-columns: 40px 1fr 35px; padding-inline: 20px; }
+  .start-control-row { width: min(390px, 94vw); grid-template-columns: 1fr; gap: 9px; }
+  .winner-count-control { min-height: 82px; }
+  .display-button { min-height: 78px; }
+  .start-button { width: 100%; min-height: 86px; grid-template-columns: 40px 1fr 35px; padding-inline: 20px; }
   .button-text strong { font-size: 20px; letter-spacing: 3px; }
   .footer-status { gap: 14px; padding-inline: 8px; }
 }

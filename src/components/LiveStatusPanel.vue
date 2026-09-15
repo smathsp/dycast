@@ -3,6 +3,7 @@
     :class="{
       'live-status-panel': true,
       'status-default': status === 0 || status === 3,
+      'status-pending': status === 4,
       'status-fail': status === 2,
       'status-ok': status === 1
     }">
@@ -41,7 +42,7 @@ watch(
         counter.stop();
         break;
       case 1:
-        text.value = '连接中';
+        text.value = '已连接';
         counter.reset();
         counter.start();
         break;
@@ -52,8 +53,15 @@ watch(
       case 3:
         text.value = '已断开';
         counter.stop();
+        break;
+      case 4:
+        text.value = '连接中';
+        counter.stop();
+        counter.reset();
+        break;
     }
-  }
+  },
+  { immediate: true }
 );
 
 /**
@@ -98,6 +106,14 @@ $timeColor: #9079ad;
       }
     }
   }
+  &.status-pending {
+    .panel-main {
+      .icon {
+        background-color: $defaultIcon;
+        animation: status-pulse 1.2s ease-in-out infinite;
+      }
+    }
+  }
   &.status-fail {
     .panel-main {
       .icon {
@@ -135,5 +151,10 @@ $timeColor: #9079ad;
       color: $textColor;
     }
   }
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
 }
 </style>

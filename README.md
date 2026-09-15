@@ -1,7 +1,7 @@
 # 抖音弹幕姬
 
 <p align=center>
-  <a href="https://github.com/skmcj/dycast">
+  <a href="https://github.com/smathsp/dycast">
     <img src="https://gcore.jsdelivr.net/gh/skmcj/pic-bed/common/dydm-bg-logo.png" alt="抖音弹幕姬" style="width: 200px">
   </a>
 </p>
@@ -12,9 +12,12 @@
 
 ## 简介
 
-一个用于获取抖音直播间弹幕的小作品
+DyCast 是一款用于获取、展示和互动处理抖音直播间弹幕的 Windows 桌面工具。
 
-用户只需要输入直播间的房间号，程序就能实时获取对应直播间的弹幕，并将其解析展示出来，用户还可通过`ws/wss`地址将获取的弹幕信息转发到自己的后端以作它用（如：弹幕互动游戏、数据分析等）
+用户输入直播间房间号或链接后，程序会实时获取并分类展示弹幕，也可通过 `ws://` / `wss://` 将整理后的消息转发到自己的服务端，用于弹幕互动游戏、数据分析等场景。
+
+当前桌面版为 **26.9.15**，Windows 正式发布物仅提供一个免安装、可直接运行的 x64 EXE，不生成安装程序。
+下载请到 [GitHub Releases](https://github.com/smathsp/dycast/releases/latest)；构建产物不提交到源码仓库。
 
 ### 实现功能
 
@@ -31,6 +34,13 @@
   - 进入弹幕
   - 其它信息(如连接过程的一些提示)
 - 展示直播间信息，如人数等
+- 提供弹幕充能、自动抽奖与中奖历史
+  - 能量达到阈值后自动抽奖，阈值最低可设为 10 条
+  - 不再要求参与者“未中过奖”，同一用户可以跨轮再次中奖
+- 提供独立的弹幕大屏、侧边栏弹幕、精选弹幕和直播顶部信息条窗口
+  - 侧边栏只负责显示弹幕，不参与能量累计或抽奖
+  - 直播顶部信息条显示剩余中奖名额与直播倒计时，可用于直播伴侣窗口采集
+  - 该窗口在系统和直播伴侣中显示为「直播顶部信息条（绿幕采集） - 抖音弹幕姬」，首次打开自动位于当前屏幕顶部
 
 ## 实现原理
 
@@ -210,10 +220,10 @@ export enum CastMethod {
 
 ## 部署步骤
 
-- 项目依赖安装
+- 项目依赖安装（建议使用锁文件）
 
     ```sh
-    npm install
+    npm ci
     ```
 
 - 项目运行
@@ -228,6 +238,32 @@ export enum CastMethod {
     npm run build
     ```
 
+- 启动 Electron 桌面端
+
+    ```sh
+    npm run electron:dev
+    ```
+
+- 完整检查并生成 Windows 免安装版
+
+    ```sh
+    npm run check
+    npm run electron:build
+    ```
+
+  生成的单文件 EXE 位于 `build/release/`。`npm run electron:build:dir` 只生成用于本地调试的未打包目录，不属于正式发布物。
+
+  Windows CI 除了运行完整检查，还会实际生成一次免安装 EXE，以便在提交阶段发现主进程文件或运行依赖漏打包的问题。
+
+- 清理生成物
+
+    ```sh
+    npm run clean
+    npm run clean:all
+    ```
+
+  `clean` 只删除仓库内明确列出的 `build`、`dist`、`dist-ssr` 和 `release` 目录；`clean:all` 还会删除覆盖率、测试产物及临时开发日志。注意：`build/` 中的免安装 EXE 也会被删除，运行前请先另存需要保留的发布文件。
+
 - 项目部署到`nginx`
 
   ```nginx
@@ -240,7 +276,7 @@ export enum CastMethod {
   
       location / {
           add_header Access-Control-Allow-Origin *;
-          # 根目录，即项目打包内容位置(···/dist)，可以是项目的本地路径
+          # 根目录，即项目打包内容位置(···/build/renderer)，可以是项目的本地路径
           root   /var/dycast;
           # 配置默认主页文件
           index  index.html index.htm;
@@ -323,6 +359,13 @@ export enum CastMethod {
   }
   ```
   
+
+## 桌面端设置与升级
+
+- 普通设置统一保存在 `%PUBLIC%\Documents\DyCast\settings.json`（常见路径为 `C:\Users\Public\Documents\DyCast\settings.json`），因此更换免安装 EXE 或升级新版本后会自动沿用原配置。
+- 设置写入时会保留 `settings.previous.json` 作为最近一次有效备份；主文件损坏时会优先尝试从备份恢复。未来版本新增的未知设置字段也会保留，避免旧版程序覆盖丢失。
+- 自定义音频位于同一公共目录的 `audio\` 子目录。
+- AI API Key 不写入公共设置。它由 Electron 使用系统安全存储加密，并保存在当前 Windows 用户自己的应用数据目录；旧版公共目录中的有效加密凭据会在首次启动时自动迁移，迁移失败则保留原文件。
 
 ## Star History
 

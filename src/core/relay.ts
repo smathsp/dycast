@@ -28,25 +28,21 @@ export class RelayCast {
 
   /** 当前状态 */
   private status: RelayStatus = 'disconnected';
+  private desiredConnected: boolean = false;
+  private lifecycleEpoch: number = 0;
 
   /** 心跳定时器 */
   private pingTimer: ReturnType<typeof setTimeout> | undefined;
   /** 心跳间隔 (ms) */
   private pingInterval: number = 30000;
-  /** 心跳计数 — 超过阈值说明连接假死 */
-  private pingCount: number = 0;
-  private pingThreshold: number = 2;
-
   /** 重连次数 */
   private reconnectCount: number = 0;
-  private maxReconnectCount: number = 5;
-  /** 是否需要重连（由外部触发的关闭不重连） */
-  private shouldReconnect: boolean = false;
   /** 重连延迟定时器 */
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** 消息缓冲区（用于节流发送） */
   private msgBuffer: string[] = [];
+  private readonly maxBufferedMessages: number = 200;
   /** 节流定时器 */
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   /** 节流间隔 (ms) */
@@ -82,58 +78,71 @@ export class RelayCast {
    * 连接
    */
   connect() {
-    if (this.status === 'connected' || this.status === 'connecting') {
+    if (this.desiredConnected || this.status === 'connected' || this.status === 'connecting' || this.status === 'reconnecting') {
       CLog.warn('RelayCast 已连接，请勿重复连接');
       return;
     }
+    this.desiredConnected = true;
     this.status = 'connecting';
-    this._doConnect();
+    const epoch = ++this.lifecycleEpoch;
+    this._doConnect(epoch);
   }
 
   /**
    * 实际连接逻辑
    */
-  private _doConnect() {
+  private _doConnect(epoch: number) {
+    if (!this.isCurrentLifecycle(epoch)) return;
     try {
-      this.ws = new WebSocket(this.url);
+      const socket = new WebSocket(this.url);
+      this.ws = socket;
 
-      this.ws.addEventListener('open', ev => {
+      socket.addEventListener('open', ev => {
+        if (!this.isCurrentSocket(socket, epoch)) return;
         this.status = 'connected';
-        this.pingCount = 0;
-        this.shouldReconnect = true;
         // 重连成功
         if (this.reconnectCount > 0) {
           CLog.info(`RelayCast 重连成功 (第${this.reconnectCount}次)`);
-          this.reconnectCount = 0;
           this.emitter.emit('reconnect', ev);
+        } else {
+          this.emitter.emit('open', ev);
         }
-        this.emitter.emit('open', ev);
-        this._startPing();
+        this._startPing(socket, epoch);
       });
 
-      this.ws.addEventListener('close', ev => {
+      socket.addEventListener('close', ev => {
+        if (!this.isCurrentSocket(socket, epoch)) return;
+        this.ws = void 0;
         this._cleanup();
-        this.emitter.emit('close', ev.code, ev.type);
-        if (this.shouldReconnect) {
-          this._reconnect();
-        }
+        this.status = 'closed';
+        this._reconnect(epoch, ev.code, ev.reason || ev.type);
       });
 
-      this.ws.addEventListener('error', ev => {
+      socket.addEventListener('error', ev => {
+        if (!this.isCurrentSocket(socket, epoch)) return;
         CLog.error('RelayCast 连接错误:', ev.type);
         this.emitter.emit('error', Error(ev.type || 'Unknown Error'));
       });
 
-      this.ws.addEventListener('message', ev => {
-        this.pingCount = 0;
+      socket.addEventListener('message', ev => {
+        if (!this.isCurrentSocket(socket, epoch)) return;
         this.emitter.emit('message', ev.data);
       });
     } catch (err) {
+      if (!this.isCurrentLifecycle(epoch)) return;
       this.status = 'closed';
       CLog.error('RelayCast 连接失败:', err);
       this.emitter.emit('error', Error('转发服务器连接出错'));
-      this.emitter.emit('close', 4002, '连接出错');
+      this._reconnect(epoch, 4002, '连接出错');
     }
+  }
+
+  private isCurrentLifecycle(epoch: number): boolean {
+    return this.desiredConnected && epoch === this.lifecycleEpoch;
+  }
+
+  private isCurrentSocket(socket: WebSocket, epoch: number): boolean {
+    return this.isCurrentLifecycle(epoch) && this.ws === socket;
   }
 
   /**
@@ -159,10 +168,17 @@ export class RelayCast {
     if (typeof data === 'string') {
       // 字符串消息进入缓冲区，合并后批量发送
       this.msgBuffer.push(data);
-      this._scheduleFlush();
+      if (this.msgBuffer.length >= this.maxBufferedMessages) {
+        if (this.flushTimer) clearTimeout(this.flushTimer);
+        this.flushTimer = void 0;
+        this._flush();
+      } else {
+        this._scheduleFlush();
+      }
     } else {
       // 二进制消息直接发送
       this.ws!.send(data);
+      this.reconnectCount = 0;
     }
   }
 
@@ -200,6 +216,7 @@ export class RelayCast {
         }
         this.ws!.send('[' + items.join(',') + ']');
       }
+      this.reconnectCount = 0;
     } catch (err) {
       CLog.error('RelayCast 发送失败:', err);
     }
@@ -210,33 +227,47 @@ export class RelayCast {
    * 关闭转发（手动关闭，不触发重连）
    */
   close(code: number = 1000, msg: string = 'close') {
-    this.shouldReconnect = false;
+    const wasActive = this.desiredConnected || Boolean(this.ws) ||
+      this.status === 'connecting' || this.status === 'connected' || this.status === 'reconnecting';
+    this.stopConnection(code, msg);
+    if (wasActive) this.emitter.emit('close', code, msg);
+  }
+
+  dispose() {
+    this.stopConnection(1000, 'dispose');
+    this.emitter.clear();
+  }
+
+  private stopConnection(code: number, msg: string) {
+    this.desiredConnected = false;
+    this.lifecycleEpoch++;
+    const socket = this.ws;
+    this.ws = void 0;
     this._cleanup();
-    if (this.ws) {
-      try {
-        this.ws.close(code, msg);
-      } catch {}
-      this.ws = undefined;
-    }
+    this.reconnectCount = 0;
     this.status = 'closed';
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      try {
+        socket.close(code, msg);
+      } catch {}
+    }
   }
 
   /**
    * 启动心跳
    */
-  private _startPing() {
+  private _startPing(socket: WebSocket, epoch: number) {
     this._stopPing();
     this.pingTimer = setInterval(() => {
-      if (!this.isConnected()) {
+      if (!this.isCurrentSocket(socket, epoch)) {
         this._stopPing();
         return;
       }
-      this.pingCount++;
-      if (this.pingCount >= this.pingThreshold) {
-        CLog.warn('RelayCast 心跳超时，连接可能已断开');
+      // 浏览器 WebSocket 无协议级 ping API。不能把“没有入站业务消息”当作
+      // 断线，否则纯接收端的安静连接会固定每 60 秒被误杀。
+      if (socket.readyState !== WebSocket.OPEN) {
+        CLog.warn('RelayCast 连接状态异常，等待关闭事件恢复');
         this._stopPing();
-        // 主动关闭触发重连
-        this.ws?.close();
       }
     }, this.pingInterval);
   }
@@ -254,14 +285,9 @@ export class RelayCast {
   /**
    * 重连
    */
-  private _reconnect() {
-    this.reconnectCount++;
-    if (this.reconnectCount > this.maxReconnectCount) {
-      CLog.error('RelayCast 已超过最大重连次数');
-      this.status = 'closed';
-      this.emitter.emit('error', Error('已超过最大重连次数'));
-      return;
-    }
+  private _reconnect(epoch: number, _code?: number, _reason?: string) {
+    if (!this.isCurrentLifecycle(epoch) || this.reconnectTimer) return;
+    this.reconnectCount = Math.min(1000, this.reconnectCount + 1);
     this.status = 'reconnecting';
     this.emitter.emit('reconnecting', this.reconnectCount);
     // 指数退避：1s, 2s, 4s, 8s, 16s
@@ -269,7 +295,7 @@ export class RelayCast {
     CLog.info(`RelayCast 将在 ${delay}ms 后重连 (第${this.reconnectCount}次)`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      this._doConnect();
+      this._doConnect(epoch);
     }, delay);
   }
 

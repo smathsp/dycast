@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 180" fill="none">
+  <defs>
+    <linearGradient id="ice" x1="26" y1="26" x2="190" y2="154" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".43" stop-color="#d8f8ff"/><stop offset="1" stop-color="#55cfff"/>
+    </linearGradient>
+    <radialGradient id="pearl"><stop stop-color="#fff"/><stop offset=".48" stop-color="#e9fbff"/><stop offset="1" stop-color="#77dfff" stop-opacity=".15"/></radialGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <g filter="url(#glow)">
+    <path d="M98 23c-53 8-78 65-54 105 22 37 76 44 111 11-39 12-76-17-72-57 2-23 15-44 35-57-7-2-13-3-20-2Z" fill="url(#ice)"/>
+    <path d="M125 132c23-10 44-27 62-52-5 28-18 51-43 68l-19-16Z" fill="url(#ice)" opacity=".86"/>
+    <path d="M136 143c20-3 38-11 56-25-10 22-25 36-47 43l-9-18Z" fill="url(#ice)" opacity=".65"/>
+    <circle cx="83" cy="86" r="17" fill="url(#pearl)" stroke="#fff" stroke-width="2"/>
+    <path d="m84 70 3 12 12 4-12 3-3 12-4-12-12-3 12-4 4-12Z" fill="#fff"/>
+  </g>
+</svg>

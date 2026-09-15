@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 190" fill="none">
+  <defs>
+    <linearGradient id="gold" x1="30" y1="14" x2="222" y2="174" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff5a7"/><stop offset=".32" stop-color="#ffd23f"/><stop offset=".7" stop-color="#ff7418"/><stop offset="1" stop-color="#b92008"/>
+    </linearGradient>
+    <linearGradient id="hot" x1="86" y1="49" x2="188" y2="142"><stop stop-color="#fffde0"/><stop offset=".42" stop-color="#ffc62f"/><stop offset="1" stop-color="#ff3911"/></linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <g filter="url(#glow)" stroke-linejoin="round">
+    <path d="M92 31c35-20 80-17 117 6-36-5-62 5-76 31 35-15 69-11 100 12-38-5-67 6-87 32 30-9 57-3 80 18-39-8-71 0-96 24-12 12-27 18-45 18 19-17 27-36 23-57-4-19 1-37 15-54-20 7-37 19-51 36 4-29 11-50 20-66Z" fill="url(#gold)"/>
+    <path d="M49 146c13-41 31-72 56-94-9 27-7 48 5 63-22 4-42 14-61 31Z" fill="url(#hot)"/>
+    <path d="M73 160c18-29 38-48 60-57-8 22-6 40 8 54-24-5-46-4-68 3Z" fill="url(#gold)" opacity=".86"/>
+    <path d="m122 70 31-16-18 25 31 1-35 12-18-10 9-12Z" fill="#fff0a3"/>
+    <path d="m151 66 31-5-22 17-9-12Z" fill="#ff8a1c"/>
+    <circle cx="133" cy="72" r="3.5" fill="#fff"/>
+  </g>
+</svg>

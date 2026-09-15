@@ -10,11 +10,11 @@
         <!-- 标题 -->
         <div class="dialog-header">
           <span class="header-emoji">🎉</span>
-          <h2 class="header-title">恭喜中奖</h2>
+          <h2 class="header-title">HAPPY！</h2>
           <span class="header-emoji">🎉</span>
         </div>
 
-        <!-- 中奖者信息 -->
+        <!-- Happy 信息 -->
         <div class="dialog-body">
           <div class="winner-avatar-wrap">
             <img
@@ -29,14 +29,14 @@
             <span class="winner-nickname">{{ state.lotteryResult.nickname }}</span>
           </div>
           <div class="winner-danmu">
-            <span class="danmu-label">中奖弹幕</span>
-            <span class="danmu-text">"{{ state.lotteryResult.content }}"</span>
+            <span class="danmu-label">Happy 弹幕</span>
+            <span class="danmu-text">“<InlineEmojiText :content="state.lotteryResult.content" :emoji-url="state.lotteryResult.emojiUrl" />”</span>
           </div>
         </div>
 
         <!-- 底部 -->
         <div class="dialog-footer">
-          <span class="lottery-count">第 {{ state.lotteryCount }} 次抽奖</span>
+          <span class="lottery-count">第 {{ state.lotteryCount }} 次 Happy</span>
           <button class="dialog-btn" @click="onClose">继续</button>
         </div>
       </div>
@@ -46,6 +46,7 @@
 
 <script setup lang="ts">
 import { useDanmuState, closeLottery } from '@/danmu/store';
+import InlineEmojiText from '@/components/InlineEmojiText.vue';
 
 const state = useDanmuState();
 

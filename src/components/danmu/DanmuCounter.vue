@@ -2,7 +2,7 @@
   <div class="danmu-counter">
     <span class="counter-icon">🔥</span>
     <div class="counter-info">
-      <span class="counter-label">累计弹幕</span>
+      <span class="counter-label">本场弹幕</span>
       <span class="counter-value">{{ formattedCount }}</span>
       <span class="counter-unit">条</span>
     </div>

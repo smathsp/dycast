@@ -1,6 +1,5 @@
 import { CLog } from '@/utils/logUtil';
 import { Emitter, type EventMap } from './emitter';
-import pako from 'pako';
 import {
   decodeChatMessage,
   decodeControlMessage,
@@ -23,21 +22,31 @@ import type {
   RoomRankMessage_RoomRank,
   RoomUserSeqMessage_Contributor,
   Text,
-  User
+  User,
+  User_FansClub_FansClubData
 } from './model';
-import { fetchUser, getImInfo, getLiveInfo } from './request';
+import { fetchUser, getImInfo, getLiveInfo, HttpRequestError } from './request';
 import { getSignature } from './signature';
 import { makeUrlParams } from './util';
+import {
+  MAX_DECODED_PAYLOAD_BYTES,
+  MAX_WEBSOCKET_FRAME_BYTES,
+  assertFramePayloadSize,
+  inflateGzipBounded,
+  isFramePayloadLimitError
+} from './framePayloadLimit';
+import { DYCAST_WS_HOST_PARAM, getDouyinPushServerHost } from './wsEndpoint';
 // import { logUserCast } from '@/utils/debugUtil';
 
 /**
  * 连接状态
  *  - 0 - 未连接
- *  - 1 - 连接中(连接完成)
+ *  - 1 - 已连接
  *  - 2 - 连接失败
  *  - 3 - 已断开
+ *  - 4 - 连接中
  */
-export type ConnectStatus = 0 | 1 | 2 | 3;
+export type ConnectStatus = 0 | 1 | 2 | 3 | 4;
 
 /** 直播间信息 */
 export interface LiveRoom {
@@ -96,6 +105,8 @@ export interface LiveRankItem {
 
 /** 粉丝团/灯牌信息 */
 export interface CastUserFansClub {
+  /** 灯牌所属主播 UID */
+  anchorId?: string;
   /** 粉丝团名称 */
   clubName?: string;
   /** 粉丝团等级 1-30 */
@@ -107,14 +118,24 @@ export interface CastUserFansClub {
 export interface CastUser {
   // user.sec_uid | user.id_str
   id?: string;
+  // 用户资料页展示、可用于搜索的纯数字抖音号（display_id）
+  douyinId?: string;
+  // 抖音号的协议字段来源
+  douyinIdSource?: 'displayId';
+  // user.short_id
+  shortId?: string;
+  // user.display_id
+  displayId?: string;
   // user.nickname
   name?: string;
   // user.avatar_thumb.url_list.0
   avatar?: string;
   // 性别 0 | 1 | 2 => 未知 | 男 | 女
   gender?: number;
-  /** 粉丝团/灯牌信息 */
-  fansClub?: CastUserFansClub;
+  /** 粉丝团/灯牌信息（可能多个） */
+  fansClub?: CastUserFansClub[];
+  /** 当前直播间主播 ID；用于隔离不同房间的灯牌缓存。 */
+  currentTargetAnchorId?: string;
 }
 
 export interface CastGift {
@@ -159,6 +180,8 @@ export interface DyMessage {
   toUser?: CastUser;
   gift?: CastGift;
   content?: string;
+  /** 会员表情的可读名称 */
+  emojiText?: string;
   rtfContent?: CastRtfContent[];
   room?: LiveRoom;
   rank?: LiveRankItem[];
@@ -407,6 +430,16 @@ export class DyCast {
   private downgradePingCount: number = 2;
 
   private pingTimer: number | undefined = void 0;
+  private reconnectTimer: number | undefined = void 0;
+  /** 用户是否仍希望保持连接。自动重连不能通过关闭码猜测这个意图。 */
+  private desiredConnected: boolean = false;
+  /** 贯穿“解析房间 → 建立 WS → 重连”的单调代次，用于淘汰所有旧异步回调。 */
+  private lifecycleEpoch: number = 0;
+  private connectAbortController: AbortController | undefined;
+  private connectionGeneration: number = 0;
+  /** 首个 WebSocket 打开后，后续打开才应报告为重连。 */
+  private hasOpenedSocket: boolean = false;
+  private lastConnectInfoRefreshTime: number = 0;
 
   // 上次接收时间
   private lastReceiveTime: number;
@@ -424,11 +457,6 @@ export class DyCast {
   private reconnectCount: number;
   /** 最大重连尝试次数 */
   private maxReconnectCount: number;
-  // 是否需要重连
-  private shouldReconnect: boolean;
-  // 正在重连中
-  private isReconnecting: boolean;
-
   // 订阅者
   private emitter: Emitter<DyCastEvent>;
 
@@ -439,7 +467,8 @@ export class DyCast {
     // 10秒心跳
     this.heartbeatDuration = 10000;
     this.pingCount = 0;
-    this.downgradePingCount = 2;
+    // 打开连接后会立即发送一次心跳，因此 4 次约等于 30 秒无有效帧。
+    this.downgradePingCount = 4;
     this.cursor = {
       cursor: '',
       firstCursor: '',
@@ -453,7 +482,6 @@ export class DyCast {
     this.lastReceiveTime = Date.now();
     // 当前客户端状态
     this.wsRoomStatus = WSRoomStatus.UNCONNECTED;
-    this.shouldReconnect = !1;
     /**
      * 默认情况
      *  - 即未收到预期的状态码
@@ -471,7 +499,6 @@ export class DyCast {
     this.imInfo = {};
     this.status = RoomStatus.END;
     this.emitter = new Emitter<DyCastEvent>();
-    this.isReconnecting = false;
   }
 
   /**
@@ -507,32 +534,78 @@ export class DyCast {
    * @returns
    */
   public async connect() {
+    if (
+      this.desiredConnected ||
+      this.wsRoomStatus === WSRoomStatus.CONNECTING ||
+      this.wsRoomStatus === WSRoomStatus.CONNECTED ||
+      this.wsRoomStatus === WSRoomStatus.RECONNECTING
+    ) {
+      this.emitter.emit('error', Error('连接正在进行，请勿重复连接'));
+      return;
+    }
+
+    this.desiredConnected = true;
+    const epoch = ++this.lifecycleEpoch;
+    this.connectAbortController?.abort();
+    const abortController = new AbortController();
+    this.connectAbortController = abortController;
+    this.wsRoomStatus = WSRoomStatus.CONNECTING;
+    this.reconnectCount = 0;
+    this.options = void 0;
+    this.hasOpenedSocket = false;
+    this.cursor = { cursor: '', firstCursor: '', internalExt: '' };
     try {
-      if (this.state) {
-        this.emitter.emit('error', Error('已连接，请勿重复连接'));
-        return;
-      }
-      await this.fetchConnectInfo(this.roomNum);
+      await this.fetchConnectInfo(this.roomNum, abortController.signal);
+      if (!this.isCurrentLifecycle(epoch)) return;
       const params = this.getWssParam();
       if (this.isLiving()) {
-        // 连接中
-        this.wsRoomStatus = WSRoomStatus.CONNECTING;
-        this._connect(params);
+        this._connect(params, epoch);
       } else {
         // 主播未开播
         const liveStatus = this.getLiveStatus();
-        this.wsRoomStatus = WSRoomStatus.CLOSED;
+        this.desiredConnected = false;
+        this._afterClose();
         this.emitter.emit('close', DyCastCloseCode.LIVE_END, liveStatus.msg);
       }
     } catch (err) {
-      // 过程错误
+      if (!this.isCurrentLifecycle(epoch)) return;
+      if (this.isPermanentLookupError(err)) {
+        this.stopForPermanentLookupError(err);
+        return;
+      }
+      // 临时查询错误仍保留连接意图，由同一退避队列重试房间信息。
       CLog.error('房间连接前错误 =>', err);
-      // 关闭
-      this.emitter.emit('close', DyCastCloseCode.CONNECTING_ERROR, '房间连接前出错');
-      this._afterClose();
-      // 报错
       this.emitter.emit('error', err as Error);
+      this.reconnect(DyCastCloseCode.CONNECTING_ERROR, '房间连接前出错');
+    } finally {
+      if (this.connectAbortController === abortController) {
+        this.connectAbortController = void 0;
+      }
     }
+  }
+
+  private isCurrentLifecycle(epoch: number): boolean {
+    return this.desiredConnected && epoch === this.lifecycleEpoch;
+  }
+
+  private isPermanentLookupError(error: unknown): error is HttpRequestError {
+    return error instanceof HttpRequestError
+      && error.status >= 400
+      && error.status < 500
+      && error.status !== 408
+      && error.status !== 429;
+  }
+
+  private stopForPermanentLookupError(error: HttpRequestError): void {
+    const message = error.status === 404
+      ? '直播间不存在或无法访问（HTTP 404），请检查房间号'
+      : error.status === 400
+        ? '直播间请求无效（HTTP 400），请检查房间号'
+        : `直播间连接请求被拒绝（HTTP ${error.status}），请检查房间号或登录状态`;
+    this.desiredConnected = false;
+    this._afterClose();
+    this.emitter.emit('error', new Error(message));
+    this.emitter.emit('close', DyCastCloseCode.CONNECTING_ERROR, message);
   }
 
   /**
@@ -546,50 +619,53 @@ export class DyCast {
    * 实际连接逻辑
    * @param opts
    */
-  private _connect(opts: DyCastOptions) {
+  private _connect(opts: DyCastOptions, epoch: number = this.lifecycleEpoch) {
+    if (!this.isCurrentLifecycle(epoch)) return;
     // 连接前的初始化
     this.options = opts;
     this.url = this._getSocketUrl(opts);
-    this.cursor = {
-      cursor: '',
-      firstCursor: opts.cursor,
-      internalExt: opts.internal_ext
-    };
+    // 同一直播会话的重连必须保留最后 ACK 游标；只有一次全新 connect 才会清空。
+    this.cursor.cursor ||= opts.cursor;
+    this.cursor.firstCursor ||= opts.cursor;
+    this.cursor.internalExt ||= opts.internal_ext;
     this.lastReceiveTime = Date.now();
     this.pingCount = 0;
+    const generation = ++this.connectionGeneration;
     try {
-      this.ws = new WebSocket(this.url);
-      this.ws.binaryType = 'arraybuffer';
-      this.ws.addEventListener('open', (ev: Event) => {
+      const socket = new WebSocket(this.url);
+      this.ws = socket;
+      socket.binaryType = 'arraybuffer';
+      socket.addEventListener('open', (ev: Event) => {
+        if (generation !== this.connectionGeneration || !this.isCurrentLifecycle(epoch)) return;
         // 可能初次打开，也可能是重连打开
-        if (this.reconnectCount > 0) {
+        if (this.hasOpenedSocket) {
           // 重连成功
-          this.reconnectCount = 0;
           this.emitter.emit('reconnect', ev);
         } else {
           // 初次连接
+          this.hasOpenedSocket = true;
           this.emitter.emit('open', ev, this.info);
         }
         this.ping();
         this._afterOpen();
       });
-      this.ws.addEventListener('close', (ev: CloseEvent) => {
+      socket.addEventListener('close', (ev: CloseEvent) => {
+        if (generation !== this.connectionGeneration || !this.isCurrentLifecycle(epoch)) return;
         this.handleClose(ev);
       });
-      this.ws.addEventListener('error', (ev: Event) => {
+      socket.addEventListener('error', (ev: Event) => {
+        if (generation !== this.connectionGeneration || !this.isCurrentLifecycle(epoch)) return;
         this.emitter.emit('error', Error(ev.type || 'Unknown Error'));
       });
-      this.ws.addEventListener('message', (ev: MessageEvent) => {
-        this.handleMessage(ev.data);
+      socket.addEventListener('message', (ev: MessageEvent) => {
+        if (generation !== this.connectionGeneration || !this.isCurrentLifecycle(epoch)) return;
+        void this.handleMessage(ev.data, socket, generation);
       });
     } catch (err) {
+      if (!this.isCurrentLifecycle(epoch)) return;
       CLog.error('房间连接过程错误 =>', err);
-      // 可能原因为 WebSocket 不可用
-      // 关闭
-      this.emitter.emit('close', DyCastCloseCode.CONNECTING_ERROR, '房间连接过程出错');
-      this._afterClose();
-      // 报错
       this.emitter.emit('error', err as Error);
+      this.requestReconnect(DyCastCloseCode.CONNECTING_ERROR, '房间连接过程出错');
     }
   }
 
@@ -604,12 +680,14 @@ export class DyCast {
         msg = this.closeEvent.msg || msg || 'closed';
         break;
     }
+    // 当前代次收到的远端关闭都按可恢复断线处理；人工停止会先递增 generation，
+    // 因而永远不会进入这里。
+    const retryRequested = this.desiredConnected && code !== DyCastCloseCode.LIVE_END;
+    this.connectionGeneration++;
     this._afterClose();
-    if (this.shouldReconnect || this.reconnectCount > 0) {
-      // 需要重连
-      this.reconnect();
+    if (retryRequested) {
+      this.reconnect(code as DyCastCloseCode, msg);
     } else {
-      // 正常关闭
       this.emitter.emit('close', code, msg);
     }
   }
@@ -617,28 +695,41 @@ export class DyCast {
   /**
    * 处理消息
    */
-  private async handleMessage(data: ArrayBuffer) {
-    this.pingCount = 0;
-    this.lastReceiveTime = Date.now();
+  private async handleMessage(data: ArrayBuffer, socket: WebSocket, generation: number) {
     let res;
     try {
+      assertFramePayloadSize(data, MAX_WEBSOCKET_FRAME_BYTES, 'websocket-frame');
       res = await this._decodeFrame(new Uint8Array(data));
     } catch (err) {
+      if (generation !== this.connectionGeneration) return;
+      if (isFramePayloadLimitError(err)) {
+        CLog.warn('弹幕数据超过安全上限，正在自动恢复连接 =>', err);
+        this.requestReconnect(DyCastCloseCode.RECONNECTING, '弹幕数据异常，正在重新连接');
+        return;
+      }
+      CLog.warn('弹幕帧解析失败，等待健康检查自动恢复 =>', err);
       res = null;
     }
+    if (generation !== this.connectionGeneration) return;
     if (!res) return;
     const { response, frame, cursor, needAck, internalExt } = res;
+    // 只有成功解码的有效帧才能证明连接健康。Payload close 不清零失败次数，
+    // 避免“刚打开就关闭”的连接形成 500ms 快速重试环。
+    if (frame?.payloadType !== PayloadType.Close) {
+      this.pingCount = 0;
+      this.lastReceiveTime = Date.now();
+      this.reconnectCount = 0;
+    }
     if (needAck) {
       // 发送 ack
       const ack = this._ack(internalExt, frame?.logId);
       this.setCursor(cursor, internalExt);
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(ack);
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(ack);
       } else {
-        // 重连
         CLog.error(`ACK发送异常 => 直播间[${this.roomNum}]已关闭`);
-        this._afterClose();
-        // this.reconnect();
+        this.requestReconnect(DyCastCloseCode.RECONNECTING, 'ACK 发送失败');
+        return;
       }
     }
     // 处理消息体
@@ -648,8 +739,8 @@ export class DyCast {
         this._dealMessages(response.messages);
       }
       if (frame.payloadType === PayloadType.Close) {
-        // 关闭连接
-        this.close(DyCastCloseCode.NORMAL, 'Close By PayloadType');
+        // 服务端 close payload 通常用于连接轮换，不代表用户停止或主播下播。
+        this.requestReconnect(DyCastCloseCode.RECONNECTING, '服务端要求更新弹幕连接');
       }
     }
   }
@@ -657,38 +748,148 @@ export class DyCast {
   /**
    * 重连
    */
-  private reconnect() {
-    // 还未关闭
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.close(DyCastCloseCode.RECONNECTING, '因重连而关闭');
+  private requestReconnect(code: DyCastCloseCode, reason: string) {
+    if (!this.desiredConnected) return;
+    if (this.wsRoomStatus === WSRoomStatus.RECONNECTING && this.reconnectTimer) return;
+
+    const socket = this.ws;
+    // 先淘汰当前 socket 的所有迟到回调，再做本地清理和单一重连调度。
+    this.connectionGeneration++;
+    this._afterClose();
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      try {
+        socket.close();
+      } catch {}
     }
-    this.shouldReconnect = !1;
+    this.reconnect(code, reason);
+  }
+
+  private reconnect(code?: DyCastCloseCode, reason?: string) {
+    if (!this.desiredConnected || this.reconnectTimer) return;
     const opts: DyCastOptions = Object.assign({}, this.options, {
-      cursor: this.cursor.cursor,
-      internal_ext: this.cursor.internalExt
+      cursor: this.cursor.cursor || this.cursor.firstCursor || this.options?.cursor || '',
+      internal_ext: this.cursor.internalExt || this.options?.internal_ext || ''
     });
-    this.reconnectCount++;
-    if (this.reconnectCount > this.maxReconnectCount) {
-      CLog.error('已超过最大重连次数，请稍后重试');
-      this.emitter.emit('error', Error('已超过最大重连次数，请稍后重试'));
+    this.reconnectCount += 1;
+    this.wsRoomStatus = WSRoomStatus.RECONNECTING;
+    this.emitter.emit('reconnecting', this.reconnectCount, code, reason);
+    // 0.5s → 1s → 2s → 4s → 8s → 15s，并加入少量抖动，断网时避免请求风暴。
+    const baseDelay = Math.min(15000, 500 * 2 ** Math.max(0, this.reconnectCount - 1));
+    const delay = Math.round(baseDelay * (0.9 + Math.random() * 0.2));
+    const epoch = this.lifecycleEpoch;
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = void 0;
+      void this.continueReconnect(opts, epoch);
+    }, delay);
+  }
+
+  /** 多次失败后刷新房间签名，避免拿过期连接参数无限重试。 */
+  private async continueReconnect(fallbackOptions: DyCastOptions, epoch: number) {
+    if (!this.isCurrentLifecycle(epoch)) return;
+    if (!this.options) {
+      // 首次房间查询失败时还没有可用 WS 参数，必须重试完整的三段初始化。
+      const abortController = new AbortController();
+      this.connectAbortController = abortController;
+      try {
+        await this.fetchConnectInfo(this.roomNum, abortController.signal);
+        if (!this.isCurrentLifecycle(epoch)) return;
+        if (!this.isLiving()) {
+          const liveStatus = this.getLiveStatus();
+          this.desiredConnected = false;
+          this._afterClose();
+          this.emitter.emit('close', DyCastCloseCode.LIVE_END, liveStatus.msg);
+          return;
+        }
+        this._connect(this.getWssParam(), epoch);
+      } catch (error) {
+        if (!this.isCurrentLifecycle(epoch)) return;
+        if (this.isPermanentLookupError(error)) {
+          this.stopForPermanentLookupError(error);
+          return;
+        }
+        CLog.warn('重试直播连接信息失败，稍后继续尝试 =>', error);
+        this.reconnect(DyCastCloseCode.CONNECTING_ERROR, '重试直播连接信息失败');
+      } finally {
+        if (this.connectAbortController === abortController) {
+          this.connectAbortController = void 0;
+        }
+      }
       return;
     }
-    this.wsRoomStatus = WSRoomStatus.RECONNECTING;
-    this.emitter.emit('reconnecting', this.reconnectCount);
-    this.isReconnecting = true;
-    this._connect(opts);
+    let nextOptions = fallbackOptions;
+    const now = Date.now();
+    if (this.reconnectCount >= this.maxReconnectCount && now - this.lastConnectInfoRefreshTime >= 30000) {
+      this.lastConnectInfoRefreshTime = now;
+      const abortController = new AbortController();
+      this.connectAbortController?.abort();
+      this.connectAbortController = abortController;
+      try {
+        await this.fetchConnectInfo(this.roomNum, abortController.signal);
+        if (!this.isCurrentLifecycle(epoch)) return;
+        if (!this.isLiving()) {
+          const liveStatus = this.getLiveStatus();
+          this.desiredConnected = false;
+          this._afterClose();
+          this.emitter.emit('close', DyCastCloseCode.LIVE_END, liveStatus.msg);
+          return;
+        }
+        const refreshedOptions = this.getWssParam();
+        nextOptions = {
+          ...refreshedOptions,
+          cursor: this.cursor.cursor || this.cursor.firstCursor || refreshedOptions.cursor,
+          internal_ext: this.cursor.internalExt || refreshedOptions.internal_ext
+        };
+      } catch (error) {
+        if (!this.isCurrentLifecycle(epoch)) return;
+        CLog.warn('刷新直播连接参数失败，稍后继续重试 =>', error);
+        this.reconnect(DyCastCloseCode.CONNECTING_ERROR, '刷新直播连接参数失败');
+        return;
+      } finally {
+        if (this.connectAbortController === abortController) {
+          this.connectAbortController = void 0;
+        }
+      }
+    }
+    if (!this.isCurrentLifecycle(epoch)) return;
+    this._connect(nextOptions, epoch);
   }
 
   /**
    * 关闭
    */
   public close(code: number = 1005, reason: string = 'close') {
-    if (this.ws) {
-      this.state = !1;
-      this.closeEvent = { code, msg: reason };
-      // 无需传 code，因为抖音弹幕ws服务端并不会处理关闭帧
-      this.ws.close();
-      this.ws = void 0;
+    const wasActive = this.desiredConnected || Boolean(this.ws) ||
+      this.wsRoomStatus === WSRoomStatus.CONNECTING ||
+      this.wsRoomStatus === WSRoomStatus.CONNECTED ||
+      this.wsRoomStatus === WSRoomStatus.RECONNECTING;
+    this.stopConnection();
+    if (wasActive) this.emitter.emit('close', code, reason);
+  }
+
+  /** 页面卸载或替换客户端时静默释放全部资源。 */
+  public dispose() {
+    this.stopConnection();
+    this.emitter.clear();
+  }
+
+  private stopConnection() {
+    this.desiredConnected = false;
+    this.lifecycleEpoch++;
+    this.connectionGeneration++;
+    this.connectAbortController?.abort();
+    this.connectAbortController = void 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = void 0;
+    }
+    const socket = this.ws;
+    this._afterClose();
+    this.reconnectCount = 0;
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      try {
+        // 无需传 code，因为抖音弹幕服务端不会可靠处理关闭帧。
+        socket.close();
+      } catch {}
     }
   }
 
@@ -727,13 +928,9 @@ export class DyCast {
    *  - 长时间未接收到消息
    */
   private cannotReceiveMessage() {
-    // 先关闭
-    this.close(DyCastCloseCode.CANNOT_RECEIVE, '客户端无法正常接收信息');
-    let tmp = Date.now() - this.lastReceiveTime;
+    const tmp = Date.now() - this.lastReceiveTime;
     CLog.error(`DyCast Cannot Receive Message => after ${tmp} ms`);
-    // 重连
-    this.emitter.emit('reconnecting', this.reconnectCount, DyCastCloseCode.CANNOT_RECEIVE, '客户端无法正常接收信息');
-    this.reconnectCount < this.maxReconnectCount && (this.shouldReconnect = !0);
+    this.requestReconnect(DyCastCloseCode.CANNOT_RECEIVE, '客户端无法正常接收信息');
   }
 
   /**
@@ -820,6 +1017,7 @@ export class DyCast {
           data.method = CastMethod.EMOJI_CHAT;
           data.user = this._getCastUser(message.user);
           data.content = this._getCastEmoji(message.emojiContent);
+          data.emojiText = this._getCastEmojiText(message.emojiContent);
           break;
         case CastMethod.ROOM_USER_SEQ:
           message = decodeRoomUserSeqMessage(payload);
@@ -902,37 +1100,51 @@ export class DyCast {
    */
   private _getCastUser(data?: User): CastUser | undefined {
     if (!data) return void 0;
+    const displayId = data.displayId?.trim();
+    const shortId = data.shortId?.trim();
+    // 名单只导出资料页可直接搜索的纯数字 display_id。
+    // data.id、short_id 和 sec_uid 都是不同类型的标识，不能用于顶替。
+    const douyinId = displayId && /^\d+$/.test(displayId) ? displayId : undefined;
+    const douyinIdSource = douyinId ? 'displayId' as const : undefined;
     const user: CastUser = {
       id: data.secUid,
+      douyinId,
+      douyinIdSource,
+      shortId,
+      displayId,
       name: data.nickname,
       gender: data.gender,
       avatar: data.avatarThumb?.urlList?.[0]
     };
-    // 提取当前主播的粉丝灯牌信息
+    // 房间号和主播 UID 不是同一种标识，不能互相兜底，否则会串灯牌。
+    const currentAnchorUid = String(this.info.anchorId || '').trim() || undefined;
+    user.currentTargetAnchorId = currentAnchorUid;
+
+    // 严格只提取当前直播间主播的灯牌，不依赖预设主播账号。
     const fansClub = data.fansClub;
-    if (fansClub) {
-      // 优先从 preferData 中匹配当前主播
-      let fc = undefined as typeof fansClub.data;
-      const anchorId = this.info.anchorId;
-      if (anchorId && fansClub.preferData) {
-        for (const key in fansClub.preferData) {
-          const entry = fansClub.preferData[key];
-          if (entry?.anchorId === anchorId) {
-            fc = entry;
-            break;
-          }
-        }
-      }
-      // 未匹配到则回退到默认 data
-      if (!fc) fc = fansClub.data;
-      if (fc && fc.level && fc.level > 0) {
-        const level = fc.level;
-        const badgeIcon = fc.badge?.icons?.[level]?.urlList?.[0];
-        user.fansClub = {
-          clubName: fc.clubName,
+    if (fansClub && currentAnchorUid) {
+      // data 是当前佩戴/历史灯牌；preferData 可能补充同一主播的完整信息。
+      const entries: Array<{ entry?: User_FansClub_FansClubData; isCurrent: boolean }> = [
+        ...Object.values(fansClub.preferData || {}).map(entry => ({ entry, isCurrent: false })),
+        { entry: fansClub.data, isCurrent: true }
+      ];
+      const results = new Map<string, CastUserFansClub>();
+      for (const { entry, isCurrent } of entries) {
+        if (!entry || entry.level === undefined) continue;
+        // 有归属 ID 时必须精确匹配当前主播；只有协议缺失 ID 才按当前房间补全。
+        const anchorUid: string | undefined = String(entry.anchorId || '').trim() ||
+          (isCurrent ? currentAnchorUid : undefined);
+        if (!anchorUid || anchorUid !== currentAnchorUid) continue;
+        const level = Math.max(0, entry.level);
+        results.set(anchorUid, {
+          anchorId: anchorUid,
+          clubName: entry.clubName,
           level,
-          badgeIcon
-        };
+          badgeIcon: entry.badge?.icons?.[level]?.urlList?.[0]
+        });
+      }
+      if (results.size > 0) {
+        user.fansClub = Array.from(results.values());
       }
     }
     return user;
@@ -965,6 +1177,11 @@ export class DyCast {
   private _getCastEmoji(data?: Text): string | undefined {
     if (!data) return void 0;
     return data.pieces?.[0]?.imageValue?.image?.urlList?.[0];
+  }
+
+  private _getCastEmojiText(data?: Text): string | undefined {
+    const content = data?.pieces?.[0]?.imageValue?.image?.content;
+    return content?.alternativeText || content?.name || '会员表情';
   }
 
   /**
@@ -1027,7 +1244,9 @@ export class DyCast {
     if (!payload) return null;
     if (headers) {
       if (headers['compress_type'] && headers['compress_type'] === 'gzip') {
-        payload = pako.ungzip(payload);
+        payload = inflateGzipBounded(payload);
+      } else {
+        assertFramePayloadSize(payload, MAX_DECODED_PAYLOAD_BYTES, 'decoded-payload');
       }
       if (headers['im-cursor']) {
         cursor = headers['im-cursor'];
@@ -1077,23 +1296,20 @@ export class DyCast {
       clearTimeout(this.pingTimer);
       this.pingTimer = void 0;
     }
-    this.cursor = {
-      cursor: '',
-      firstCursor: '',
-      internalExt: ''
-    };
+    // 保留最后一次 ACK 游标，短暂断线重连时从断点继续，减少漏弹幕和重复回放。
     this.wsRoomStatus = WSRoomStatus.CLOSED;
     this.closeEvent = { code: DyCastCloseCode.NO_STATUS, msg: 'CLOSE_NO_STATUS' };
     this.ws = void 0;
-    this.isReconnecting = false;
   }
 
   /** 打开后 */
   private _afterOpen() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = void 0;
+    }
     this.state = !0;
     this.wsRoomStatus = WSRoomStatus.CONNECTED;
-    this.isReconnecting = false;
-    this.reconnectCount = 0;
   }
 
   /**
@@ -1103,7 +1319,10 @@ export class DyCast {
    */
   private _getSocketUrl(opts: DyCastOptions) {
     const fullOpt = Object.assign({}, defaultOpts, opts);
-    return `${BASE_URL}?${this._mergeOptions(fullOpt)}`;
+    const query = new URLSearchParams(this._mergeOptions(fullOpt));
+    const pushHost = getDouyinPushServerHost(this.imInfo.pushServer);
+    if (pushHost) query.set(DYCAST_WS_HOST_PARAM, pushHost);
+    return `${BASE_URL}?${query.toString()}`;
   }
 
   /**
@@ -1121,14 +1340,16 @@ export class DyCast {
    * @param roomNum
    * @returns
    */
-  private async fetchConnectInfo(roomNum: string) {
+  private async fetchConnectInfo(roomNum: string, signal?: AbortSignal) {
     try {
-      const info = await getLiveInfo(roomNum);
+      const info = await getLiveInfo(roomNum, signal);
+      await fetchUser(signal);
+      const imInfo = await getImInfo(info.roomId, info.uniqueId, signal);
+      if (signal?.aborted) throw new DOMException('连接已取消', 'AbortError');
+      // 三段初始化全部成功后再一次性提交，避免失败请求留下半套连接参数。
       this.info = info;
       this.status = info.status;
-      await fetchUser();
-      const res = await getImInfo(info.roomId, info.uniqueId);
-      this.imInfo = res;
+      this.imInfo = imInfo;
     } catch (err) {
       // CLog.error('DyCast LiveInfo Request Error =>', err);
       return Promise.reject(err);

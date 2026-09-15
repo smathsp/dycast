@@ -6,7 +6,7 @@
         class="lottery-overlay"
         :class="[`phase-${phase}`]"
       >
-        <div class="screen-flash"></div>
+        <WindowDisplayPicker variant="lottery" />
         <div class="scan-lines"></div>
 
         <div class="energy-beams">
@@ -46,7 +46,7 @@
                 </svg>
               </div>
               <div class="title-content">
-                <span class="title-main">弹幕能量抽奖</span>
+                <span class="title-main">弹幕能量 Happy</span>
                 <span class="title-sub">DANMAKU ULTIMATE DRAW</span>
               </div>
             </div>
@@ -90,8 +90,8 @@
                   <div class="candidate-label">
                     SCANNING DANMAKU
                   </div>
-                  <h2>{{ displayDanmu.nickname }}</h2>
-                  <p>{{ displayDanmu.content }}</p>
+                  <h2 :title="displayDanmu.nickname">{{ displayDanmu.nickname }}</h2>
+                  <p :title="displayDanmu.content"><InlineEmojiText :content="displayDanmu.content" :emoji-url="displayDanmu.emojiUrl" /></p>
                 </div>
 
                 <div class="candidate-code">{{ formatCandidateCode(displayDanmu.id) }}</div>
@@ -108,14 +108,14 @@
             </div>
           </section>
 
-          <!-- 中奖揭晓 -->
+          <!-- Happy 揭晓 -->
           <Transition name="winner-reveal">
             <section v-if="phase === 'reveal' && winner" class="winner-stage">
               <div class="winner-rays"></div>
 
               <div class="winner-crown">
                 <span></span>
-                <strong>WINNER</strong>
+                <strong>{{ batchWinners.length > 1 ? `HAPPY ${currentWinnerIndex + 1}/${batchWinners.length}` : 'HAPPY' }}</strong>
                 <span></span>
               </div>
 
@@ -142,29 +142,40 @@
                 </div>
 
                 <div class="winner-information">
-                  <span class="winner-label">第 {{ drawNo }} 次能量抽奖</span>
-                  <h1>{{ winner.nickname }}</h1>
+                  <span class="winner-label">
+                    第 {{ drawNo }} 轮 · 第 {{ currentWinnerIndex + 1 }} / {{ batchWinners.length }} 位
+                  </span>
+                  <time class="winner-timestamp">HAPPY TIME · {{ formatHappyTime(winner.wonAt || winner.timestamp) }}</time>
+                  <h1 :title="winner.nickname">{{ winner.nickname }}</h1>
                   <div class="winner-message">
                     <span class="quote quote-left">"</span>
-                    <p>{{ winner.content }}</p>
+                    <p :title="winner.content"><InlineEmojiText :content="winner.content" :emoji-url="winner.emojiUrl" /></p>
                     <span class="quote quote-right">"</span>
                   </div>
                 </div>
 
                 <div class="winner-number">
-                  <small>DRAW</small>
-                  <strong>#{{ String(drawNo).padStart(3, '0') }}</strong>
+                  <small>HAPPY</small>
+                  <strong>{{ currentWinnerIndex + 1 }}</strong>
                 </div>
               </article>
 
               <div class="winner-result-text">
-                <span>CONGRATULATIONS</span>
-                <strong>恭喜中奖</strong>
+                <span>{{ currentWinnerIndex + 1 < batchWinners.length ? 'AWAITING NEXT HAPPY' : 'ALL HAPPY COMPLETE' }}</span>
+                <strong>{{ currentWinnerIndex + 1 < batchWinners.length ? '等待主播揭晓下一位 Happy' : completionMessage }}</strong>
               </div>
 
-              <button class="close-button" type="button" @click="handleClose">
-                <span>完成</span>
-                <small>DONE</small>
+              <div v-if="batchWinners.length > 1" class="reveal-progress" :aria-label="`已完成 Happy ${currentWinnerIndex + 1} / ${batchWinners.length} 位`">
+                <i
+                  v-for="item in batchWinners.length"
+                  :key="item"
+                  :class="{ revealed: item <= currentWinnerIndex + 1, current: item === currentWinnerIndex + 1 }"
+                ></i>
+              </div>
+
+              <button class="close-button" type="button" @click="handleRevealAction">
+                <span>{{ currentWinnerIndex + 1 < batchWinners.length ? '揭晓下一位 Happy' : '完成' }}</span>
+                <small>{{ currentWinnerIndex + 1 < batchWinners.length ? 'REVEAL NEXT' : 'DONE' }}</small>
               </button>
             </section>
           </Transition>
@@ -176,9 +187,19 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
-import { useDanmuState, settings, drawLottery, closeLottery, stopCollecting } from '@/danmu/store';
+import {
+  useDanmuState,
+  settings,
+  prepareLotteryBatch,
+  revealLotteryWinner,
+  closeLottery,
+  stopCollecting
+} from '@/danmu/store';
 import { stopCharging, playLottery, playWinner, stopAll } from '@/danmu/audio';
 import type { Danmu } from '@/danmu/types';
+import InlineEmojiText from '@/components/InlineEmojiText.vue';
+import WindowDisplayPicker from '@/components/danmu/WindowDisplayPicker.vue';
+import { lockBodyScroll } from '@/utils/bodyScrollLock';
 
 type LotteryPhase = 'ignition' | 'rolling' | 'reveal';
 
@@ -190,22 +211,35 @@ const winner = ref<Danmu | null>(null);
 const rollingDanmu = ref<Danmu | null>(null);
 const rollingKey = ref(0);
 const drawNo = ref(0);
+const batchWinners = ref<Danmu[]>([]);
+const currentWinnerIndex = ref(-1);
+const AUTO_EXPORT_EVENT = 'dycast-auto-export-winner-png';
 
 let timers: number[] = [];
 let rollingTimer: number | null = null;
 let animationToken = 0;
+let releaseBodyScroll: (() => void) | null = null;
 
 const displayDanmu = computed(() => {
   return rollingDanmu.value ?? winner.value;
 });
 
+const completionMessage = computed(() => {
+  return batchWinners.value.length <= 1
+    ? 'HAPPY！'
+    : `HAPPY × ${batchWinners.value.length} 全部完成`;
+});
+
 const phaseText = computed(() => {
-  const labels: Record<LotteryPhase, string> = {
-    ignition: '能量解放',
-    rolling: '正在扫描全部弹幕',
-    reveal: '抽奖完成'
-  };
-  return labels[phase.value];
+  if (phase.value === 'ignition') return `能量解放 · 锁定 ${batchWinners.value.length} 位 Happy`;
+  if (phase.value === 'rolling') {
+    return currentWinnerIndex.value < 0
+      ? '正在扫描全部弹幕'
+      : `正在抽取第 ${currentWinnerIndex.value + 2} 位 Happy`;
+  }
+  return currentWinnerIndex.value + 1 < batchWinners.value.length
+    ? `第 ${currentWinnerIndex.value + 1} 位 Happy 已揭晓 · 等待主播操作`
+    : '本批 Happy 完成';
 });
 
 const particles = Array.from({ length: 36 }, (_, i) => ({
@@ -234,7 +268,8 @@ const confetti = Array.from({ length: 60 }, (_, i) => ({
 // 监听抽奖触发
 watch(() => state.isLotteryActive, (active) => {
   if (active) startLotteryAnimation();
-});
+  else cancelLotteryAnimationView();
+}, { immediate: true });
 
 function schedule(callback: () => void, delay: number) {
   timers.push(window.setTimeout(callback, delay));
@@ -250,13 +285,28 @@ function clearAnimation() {
   }
 }
 
+/** 仅清理当前窗口的动画资源；会话切换时不能再反向修改已经重置的 store。 */
+function cancelLotteryAnimationView() {
+  const wasRendering = visible.value || batchWinners.value.length > 0 || timers.length > 0 || rollingTimer !== null;
+  clearAnimation();
+  releaseBodyScroll?.();
+  releaseBodyScroll = null;
+  visible.value = false;
+  phase.value = 'ignition';
+  winner.value = null;
+  rollingDanmu.value = null;
+  batchWinners.value = [];
+  currentWinnerIndex.value = -1;
+  if (wasRendering) stopAll();
+}
+
 function getRandomCandidate(): Danmu | null {
   const pool = state.lotteryPool;
   if (pool.length === 0) return winner.value;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function runRoulette(token: number) {
+function runRoulette(token: number, duration = 3000) {
   const startedAt = performance.now();
   const nextFrame = () => {
     if (token !== animationToken || !visible.value) return;
@@ -264,29 +314,63 @@ function runRoulette(token: number) {
     rollingDanmu.value = getRandomCandidate();
     rollingKey.value++;
     let delay = 55;
-    if (elapsed > 1500) delay = 80;
-    if (elapsed > 2200) delay = 120;
-    if (elapsed > 2700) delay = 190;
-    if (elapsed < 3000) {
+    if (elapsed > duration * 0.48) delay = 90;
+    if (elapsed > duration * 0.72) delay = 140;
+    if (elapsed > duration * 0.9) delay = 190;
+    if (elapsed < duration) {
       rollingTimer = window.setTimeout(nextFrame, delay);
     }
   };
   nextFrame();
 }
 
+function revealWinnerAt(index: number, token: number) {
+  if (token !== animationToken || !state.isLotteryActive) return;
+  const result = batchWinners.value[index];
+  if (!result) return;
+  currentWinnerIndex.value = index;
+  winner.value = result;
+  drawNo.value = result.drawNo ?? state.lotteryCount;
+  revealLotteryWinner(result);
+  rollingDanmu.value = result;
+  rollingKey.value++;
+  phase.value = 'reveal';
+  if (index === 0) playWinner();
+
+}
+
+function beginNextReveal(token = animationToken) {
+  if (token !== animationToken) return;
+  const nextIndex = currentWinnerIndex.value + 1;
+  if (nextIndex >= batchWinners.value.length) return;
+  const scanDuration = batchWinners.value.length >= 24 ? 600 : 800;
+  phase.value = 'rolling';
+  rollingDanmu.value = getRandomCandidate();
+  rollingKey.value++;
+  runRoulette(token, scanDuration);
+  schedule(() => revealWinnerAt(nextIndex, token), scanDuration);
+}
+
 function startLotteryAnimation() {
   clearAnimation();
-  // 先确定中奖者
-  const result = drawLottery();
-  winner.value = result;
-  drawNo.value = state.lotteryCount;
+  // 开始动画前一次性锁定整批结果，后续只控制揭晓节奏。
+  const results = prepareLotteryBatch(settings.lotteryWinnerCount);
+  if (results.length === 0) {
+    // 没有符合条件的中奖者
+    closeLottery();
+    return;
+  }
+  batchWinners.value = results;
+  currentWinnerIndex.value = -1;
+  winner.value = null;
+  drawNo.value = results[0].drawNo ?? state.lotteryCount;
 
   const token = animationToken;
   phase.value = 'ignition';
   rollingDanmu.value = getRandomCandidate();
   rollingKey.value++;
   visible.value = true;
-  document.body.style.overflow = 'hidden';
+  releaseBodyScroll ??= lockBodyScroll();
 
   // 停止充能音乐，播放抽奖音效（5s）
   stopCharging();
@@ -296,27 +380,32 @@ function startLotteryAnimation() {
   schedule(() => {
     if (token !== animationToken) return;
     phase.value = 'rolling';
-    runRoulette(token);
+    runRoulette(token, 3000);
   }, 500);
 
-  // 3500ms：直接揭晓中奖弹幕 + 播放中奖循环音乐
+  // 3500ms：揭晓第一位，后续中奖者逐位滚动揭晓。
   schedule(() => {
-    if (token !== animationToken) return;
-    rollingDanmu.value = winner.value;
-    rollingKey.value++;
-    phase.value = 'reveal';
-    playWinner();
+    revealWinnerAt(0, token);
   }, 3500);
 }
 
+function handleRevealAction() {
+  if (currentWinnerIndex.value + 1 < batchWinners.value.length) {
+    beginNextReveal();
+    return;
+  }
+  const completedBatch = [...batchWinners.value];
+  const batchId = completedBatch[0]?.batchId;
+  handleClose();
+  if (completedBatch.length > 1 && batchId) {
+    window.dispatchEvent(new CustomEvent(AUTO_EXPORT_EVENT, { detail: { batchId } }));
+  }
+}
+
 function handleClose() {
-  clearAnimation();
-  document.body.style.overflow = '';
-  visible.value = false;
-  phase.value = 'ignition';
+  cancelLotteryAnimationView();
   closeLottery();
   stopCollecting();
-  stopAll();
 }
 
 function handleAvatarError(e: Event) {
@@ -327,13 +416,25 @@ function getInitial(name: string) {
   return name?.trim().slice(0, 1).toUpperCase() || '?';
 }
 
+function formatHappyTime(timestamp: number) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  }).format(new Date(timestamp)).replace(/\//g, '.');
+}
+
 function formatCandidateCode(id: string) {
   const v = id || 'UNKNOWN';
   return v.length > 12 ? `${v.slice(0, 5)}...${v.slice(-4)}` : v;
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && visible.value && phase.value === 'reveal') {
+  if (
+    e.key === 'Escape'
+    && visible.value
+    && phase.value === 'reveal'
+    && currentWinnerIndex.value + 1 >= batchWinners.value.length
+  ) {
     handleClose();
   }
 }
@@ -344,8 +445,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  clearAnimation();
-  document.body.style.overflow = '';
+  cancelLotteryAnimationView();
   window.removeEventListener('keydown', handleKeydown);
 });
 </script>
@@ -361,21 +461,19 @@ onBeforeUnmount(() => {
 
   position: fixed;
   inset: 0;
-  z-index: 99999;
+  z-index: 100100;
   display: grid;
   place-items: center;
-  overflow: hidden;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 20px 0;
   color: #fff;
   isolation: isolate;
   font-family: Inter, "Microsoft YaHei", "PingFang SC", sans-serif;
-  background:
-    radial-gradient(circle at 50% 48%, rgba(54, 61, 179, 0.34), transparent 30%),
-    radial-gradient(circle at 50% 50%, rgba(120, 46, 255, 0.2), transparent 55%),
-    linear-gradient(145deg, rgba(4, 6, 24, 0.97), rgba(12, 8, 45, 0.98) 55%, rgba(4, 6, 25, 0.99));
-  backdrop-filter: blur(16px);
+  background: transparent;
+  backdrop-filter: none;
 }
-
-.screen-flash { position: absolute; inset: 0; z-index: 50; opacity: 0; pointer-events: none; }
 
 .scan-lines {
   position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0.28;
@@ -407,6 +505,7 @@ onBeforeUnmount(() => {
 
 .lottery-arena {
   position: relative; width: min(1040px, calc(100vw - 40px)); min-height: 680px;
+  flex: 0 0 auto; margin: auto;
   display: flex; flex-direction: column; align-items: center; justify-content: center; perspective: 1200px;
 }
 
@@ -572,15 +671,15 @@ onBeforeUnmount(() => {
 }
 
 .candidate-information h2 {
-  margin: 0 0 12px; overflow: hidden; color: #fff; font-size: 30px; font-weight: 950;
-  letter-spacing: 2px; text-overflow: ellipsis; white-space: nowrap;
+  margin: 0 0 12px; color: #fff; font-family: 'LXGW WenKai', 'Microsoft YaHei UI', sans-serif; font-size: 30px; font-weight: 700;
+  line-height: 1.18; letter-spacing: 1px; overflow-wrap: anywhere;
   text-shadow: 0 3px 0 rgba(13, 20, 68, 0.9), 0 0 12px rgba(79, 210, 255, 0.5);
 }
 
 .candidate-information p {
-  display: -webkit-box; max-width: 500px; margin: 0; overflow: hidden;
+  display: block; max-width: 500px; max-height: 5.3em; margin: 0; overflow: auto;
   color: rgba(226, 239, 255, 0.82); font-size: 17px; line-height: 1.65;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin;
 }
 
 .candidate-code {
@@ -694,10 +793,11 @@ onBeforeUnmount(() => {
 .winner-information { position: relative; z-index: 3; min-width: 0; }
 
 .winner-label { color: #ffd83d; font-size: 11px; font-weight: 900; letter-spacing: 4px; text-shadow: 0 0 10px #ff9d00; }
+.winner-timestamp { display: block; margin-top: 7px; color: rgba(180, 211, 255, 0.72); font-size: 10px; font-weight: 700; letter-spacing: 1.2px; font-variant-numeric: tabular-nums; }
 
 .winner-information h1 {
-  margin: 10px 0 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 42px; font-weight: 950; font-style: italic; letter-spacing: 3px;
+  margin: 10px 0 17px; font-family: 'LXGW WenKai', 'Microsoft YaHei UI', sans-serif;
+  font-size: 42px; font-weight: 700; line-height: 1.14; letter-spacing: 1px; overflow-wrap: anywhere;
   background: linear-gradient(180deg, #fff, #fff8c7 43%, #ffd943 78%, #ff8a00);
   -webkit-background-clip: text; color: transparent;
   filter: drop-shadow(0 3px 0 rgba(95, 39, 0, 0.85)) drop-shadow(0 0 12px rgba(255, 196, 24, 0.62));
@@ -709,7 +809,18 @@ onBeforeUnmount(() => {
   border-left: 2px solid rgba(255, 213, 64, 0.7); font-size: 18px; line-height: 1.6;
 }
 
-.winner-message p { display: -webkit-box; margin: 0; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.winner-message p {
+  display: block; max-height: min(9.6em, 24vh); margin: 0; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin;
+}
+
+.candidate-information p::-webkit-scrollbar,
+.winner-message p::-webkit-scrollbar { width: 5px; }
+.candidate-information p::-webkit-scrollbar-thumb,
+.winner-message p::-webkit-scrollbar-thumb {
+  border-radius: 99px;
+  background: rgba(179, 211, 255, 0.36);
+}
 
 .quote { position: absolute; color: rgba(255, 221, 103, 0.35); font-family: Georgia, serif; font-size: 45px; line-height: 1; }
 .quote-left { left: 8px; top: 3px; }
@@ -721,7 +832,14 @@ onBeforeUnmount(() => {
 }
 
 .winner-number small { font-size: 8px; letter-spacing: 3px; }
-.winner-number strong { margin-top: 3px; font-size: 21px; }
+.winner-number strong {
+  margin-top: 3px;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+  font-size: 21px;
+  font-style: normal;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
 
 .winner-result-text { position: relative; z-index: 4; display: flex; flex-direction: column; align-items: center; margin-top: 22px; }
 
@@ -730,6 +848,38 @@ onBeforeUnmount(() => {
 .winner-result-text strong {
   margin-top: 6px; color: #fff; font-size: 25px; font-style: italic; letter-spacing: 8px;
   text-shadow: 0 0 5px #fff, 0 0 13px #ffd83d, 0 0 28px #ff8500;
+}
+
+.reveal-progress {
+  position: relative;
+  z-index: 5;
+  width: min(620px, calc(100vw - 72px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.reveal-progress i {
+  width: 15px;
+  height: 5px;
+  border-radius: 99px;
+  background: rgba(132, 151, 218, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(178, 195, 255, 0.08);
+  transition: 220ms ease;
+}
+
+.reveal-progress i.revealed {
+  background: rgba(255, 205, 61, 0.72);
+  box-shadow: 0 0 8px rgba(255, 183, 31, 0.35);
+}
+
+.reveal-progress i.current {
+  width: 26px;
+  background: #fff2a6;
+  box-shadow: 0 0 5px #fff, 0 0 15px #ffbe28;
 }
 
 /* 关闭按钮 */
@@ -773,14 +923,12 @@ onBeforeUnmount(() => {
 /* 阶段特效 */
 .phase-ignition .lottery-arena { animation: ignitionShake 0.65s ease-out; }
 
-.phase-reveal {
-  background:
-    radial-gradient(circle at 50% 48%, rgba(255, 170, 20, 0.27), transparent 32%),
-    radial-gradient(circle at 50% 50%, rgba(255, 211, 55, 0.12), transparent 62%),
-    linear-gradient(145deg, rgba(20, 10, 4, 0.98), rgba(39, 13, 21, 0.98) 55%, rgba(13, 7, 25, 0.99));
+/* 准备、轮播、揭晓都不绘制全屏背景，只保留中心抽奖内容和庆祝特效。 */
+.scan-lines,
+.energy-beams,
+.background-particles {
+  opacity: 0;
 }
-
-.phase-reveal .screen-flash { animation: revealFlash 1.1s ease-out forwards; }
 
 /* 转场 */
 .candidate-change-enter-active { animation: candidateEnter 0.14s ease-out; }
@@ -810,7 +958,6 @@ onBeforeUnmount(() => {
 @keyframes particleFloat { 0% { opacity: 0; transform: translateY(25px) scale(0.4); } 25% { opacity: 0.9; } 100% { opacity: 0; transform: translateY(-130px) translateX(35px) scale(1.3); } }
 @keyframes confettiFall { 0% { opacity: 1; transform: translate3d(0, -30px, 0) rotate(var(--confetti-rotation)); } 100% { opacity: 0.25; transform: translate3d(var(--confetti-offset), 110vh, 0) rotate(calc(var(--confetti-rotation) + 720deg)); } }
 @keyframes ignitionShake { 0% { transform: scale(0.86); filter: brightness(3); } 35% { transform: scale(1.04) translateX(-5px); } 55% { transform: scale(0.99) translateX(5px); } 100% { transform: scale(1) translateX(0); filter: brightness(1); } }
-@keyframes revealFlash { 0% { position: absolute; inset: 0; z-index: 50; opacity: 1; background: #fff; } 20% { opacity: 0.9; } 100% { opacity: 0; background: #ffd83d; pointer-events: none; } }
 @keyframes candidateEnter { from { opacity: 0; filter: blur(8px); transform: translateX(75px) scaleX(0.9); } to { opacity: 1; filter: blur(0); transform: translateX(0) scaleX(1); } }
 @keyframes candidateLeave { to { opacity: 0; filter: blur(8px); transform: translateX(-70px) scaleX(0.92); } }
 @keyframes winnerStageReveal { 0% { opacity: 0; filter: brightness(3) blur(10px); transform: scale(1.45) translateZ(200px); } 55% { opacity: 1; filter: brightness(1.5) blur(0); transform: scale(0.96) translateZ(0); } 100% { filter: brightness(1); transform: scale(1); } }
