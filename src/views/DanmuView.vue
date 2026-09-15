@@ -82,9 +82,16 @@ const previewVariant = new URLSearchParams(location.search).get('preview');
 const isPreviewMode = !window.electronAPI && previewVariant !== null;
 const previewTimers: number[] = [];
 let isMousePassthrough = false;
+let desiredMousePassthrough = false;
+let passthroughTimer: ReturnType<typeof setTimeout> | null = null;
+let lastPassthroughChangeAt = Number.NEGATIVE_INFINITY;
 let cursorPollingTimer: ReturnType<typeof setInterval> | null = null;
 let cursorPollingBusy = false;
+let cursorPollingEpoch = 0;
+let cursorRequestToken = 0;
 const INTERACTIVE_OVERLAY_SELECTOR = '.danmu-click-target, button, .window-display-picker, .winner-host, .png-preview-float';
+// Coalesce rapid transitions without delaying a newly hovered click target.
+const PASSTHROUGH_MIN_GAP_MS = 150;
 
 function createPreviewDanmu(level: number, nickname: string, content: string, index: number): Danmu {
   const anchorId = 'preview-anchor';
@@ -136,14 +143,43 @@ function startHistoryPreview(): void {
   showHistory.value = true;
 }
 
-function setMousePassthrough(ignore: boolean) {
+function applyMousePassthrough(ignore: boolean) {
   if (isMousePassthrough === ignore) return;
   isMousePassthrough = ignore;
+  lastPassthroughChangeAt = performance.now();
   window.electronAPI?.setDanmuMousePassthrough?.(ignore);
 }
 
+function setMousePassthroughNow(ignore: boolean) {
+  if (passthroughTimer !== null) clearTimeout(passthroughTimer);
+  passthroughTimer = null;
+  desiredMousePassthrough = ignore;
+  applyMousePassthrough(ignore);
+}
+
+function setMousePassthrough(ignore: boolean) {
+  // A transparent Electron window cannot receive clicks while ignored. Restore
+  // hit testing immediately when a button or danmu text moves under the cursor.
+  if (!ignore) {
+    setMousePassthroughNow(false);
+    return;
+  }
+  desiredMousePassthrough = true;
+  if (isMousePassthrough || passthroughTimer !== null) return;
+  const elapsed = performance.now() - lastPassthroughChangeAt;
+  const delay = Math.max(0, PASSTHROUGH_MIN_GAP_MS - elapsed);
+  if (delay === 0) {
+    applyMousePassthrough(true);
+    return;
+  }
+  passthroughTimer = setTimeout(() => {
+    passthroughTimer = null;
+    if (desiredMousePassthrough) applyMousePassthrough(true);
+  }, delay);
+}
+
 function enableMousePassthrough() {
-  if (state.isDisplaying && !state.isLotteryActive && !showHistory.value) setMousePassthrough(true);
+  if (state.isDisplaying && !state.isLotteryActive && !showHistory.value) setMousePassthroughNow(true);
 }
 
 function syncMousePassthrough(event: MouseEvent) {
@@ -158,14 +194,22 @@ function syncMousePassthrough(event: MouseEvent) {
 }
 
 async function syncMousePassthroughFromCursor() {
-  if (cursorPollingBusy || document.hidden || !state.isDisplaying || !window.electronAPI?.getDanmuCursorPosition) return;
+  if (!cursorPollingTimer || cursorPollingBusy || document.hidden || !state.isDisplaying || state.isLotteryActive || !window.electronAPI?.getDanmuCursorPosition) return;
   if (showHistory.value) {
-    setMousePassthrough(false);
+    setMousePassthroughNow(false);
     return;
   }
+  const pollingEpoch = cursorPollingEpoch;
+  const requestToken = ++cursorRequestToken;
   cursorPollingBusy = true;
   try {
     const cursor = await window.electronAPI.getDanmuCursorPosition();
+    // stopCursorPolling invalidates in-flight IPC results. A late cursor result
+    // must not make the winner/history overlay transparent to mouse clicks.
+    if (
+      !cursorPollingTimer || pollingEpoch !== cursorPollingEpoch || requestToken !== cursorRequestToken ||
+      document.hidden || !state.isDisplaying || state.isLotteryActive || showHistory.value
+    ) return;
     if (!cursor?.inside) {
       setMousePassthrough(true);
       return;
@@ -176,7 +220,7 @@ async function syncMousePassthroughFromCursor() {
   } catch (error) {
     console.warn('[DanmuView] 读取鼠标位置失败:', error);
   } finally {
-    cursorPollingBusy = false;
+    if (requestToken === cursorRequestToken) cursorPollingBusy = false;
   }
 }
 
@@ -188,6 +232,8 @@ function startCursorPolling() {
 function stopCursorPolling() {
   if (cursorPollingTimer) clearInterval(cursorPollingTimer);
   cursorPollingTimer = null;
+  cursorPollingEpoch++;
+  cursorRequestToken++;
   cursorPollingBusy = false;
 }
 
@@ -228,7 +274,8 @@ function handleStopDisplaying() {
 }
 
 function handleCloseWindow() {
-  setMousePassthrough(false);
+  stopCursorPolling();
+  setMousePassthroughNow(false);
   window.electronAPI?.closeDanmuPage?.();
 }
 
@@ -258,7 +305,7 @@ onMounted(() => {
   startListening();
   document.addEventListener('visibilitychange', handleVisibilityChange);
   if (state.isDisplaying) {
-    setMousePassthrough(true);
+    setMousePassthroughNow(true);
     startCursorPolling();
   }
 });
@@ -270,12 +317,12 @@ onUnmounted(() => {
   stopListening();
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   stopCursorPolling();
-  setMousePassthrough(false);
+  setMousePassthroughNow(false);
 });
 
 watch(() => state.isDisplaying, displaying => {
   const canPassThrough = displaying && !state.isLotteryActive && !showHistory.value;
-  setMousePassthrough(canPassThrough);
+  setMousePassthroughNow(canPassThrough);
   if (canPassThrough) startCursorPolling();
   else stopCursorPolling();
 });
@@ -286,9 +333,9 @@ watch(() => state.isLotteryActive, active => {
     // 记录面板不能遮挡自动开奖；满能量后优先显示抽奖结果。
     showHistory.value = false;
     stopCursorPolling();
-    setMousePassthrough(false);
+    setMousePassthroughNow(false);
   } else if (state.isDisplaying && !showHistory.value) {
-    setMousePassthrough(true);
+    setMousePassthroughNow(true);
     startCursorPolling();
   }
 }, { immediate: true });
@@ -301,9 +348,9 @@ watch(() => state.isCollecting, collecting => {
 watch(showHistory, visible => {
   if (visible) {
     stopCursorPolling();
-    setMousePassthrough(false);
+    setMousePassthroughNow(false);
   } else if (state.isDisplaying && !state.isLotteryActive) {
-    setMousePassthrough(true);
+    setMousePassthroughNow(true);
     startCursorPolling();
   }
 });
